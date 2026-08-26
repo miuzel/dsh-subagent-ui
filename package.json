@@ -1,6 +1,6 @@
 {
   "name": "dsh-subagent-workspace-ui",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "description": "Searchable workspace subagent manager for DeepSeek Harness Web",
   "license": "MIT",
