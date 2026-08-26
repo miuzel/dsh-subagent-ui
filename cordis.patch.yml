@@ -3,8 +3,7 @@
     - id: subagent-workspace-manager
       name: 'dsh-subagent-workspace-ui'
 
-# Optional: disable the stock lineage dropdown once this manager is installed.
-# The manager itself uses the standard header-actions slot and does not replace
-# the entire conversation header.
-# - id: ui-subagent
-#   disabled: true
+# Disable the stock lineage dropdown while this manager is installed.
+# Removing this bundle restores the user's underlying ui-subagent setting.
+- id: ui-subagent
+  disabled: true

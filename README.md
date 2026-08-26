@@ -37,9 +37,9 @@ From this directory:
 dsh plugin --profile web add file:.
 ```
 
-Then append the contents of [`cordis.patch.yml`](cordis.patch.yml) to your Web profile patch (usually `$DSH_HOME/profiles/web/cordis.patch.yml`) and restart the existing `dsh web` process. Refresh `http://127.0.0.1:3080` after the plugin is available.
+The bundle includes [`cordis.patch.yml`](cordis.patch.yml), which inserts the manager and disables DSH’s stock `ui-subagent` lineage dropdown while the package is installed. Removing the package removes this bundle layer and restores the underlying `ui-subagent` setting. Restart the existing `dsh web` process, then refresh `http://127.0.0.1:3080` after the plugin is available.
 
-To make this the sole subagent navigation UI, also enable the optional `ui-subagent` disable stanza in the patch. That removes DSH’s stock header lineage dropdown while retaining this manager button.
+If you previously disabled `ui-subagent` manually in `$DSH_HOME/profiles/web/cordis.patch.yml`, remove that manual stanza when testing automatic restoration; user-owned settings are intentionally preserved.
 
 ## Runtime data boundary
 

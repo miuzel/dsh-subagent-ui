@@ -151,13 +151,13 @@ dsh plugin --profile web remove dsh-subagent-workspace-ui
 dsh plugin --profile web add file:.
 ```
 
-然后将 [`cordis.patch.yml`](cordis.patch.yml) 中的插件插入配置应用到 Web profile，并重启现有的 `dsh web` 进程。刷新：
+插件 bundle 会自动加载 [`cordis.patch.yml`](cordis.patch.yml)：安装期间插入管理器，并禁用 DSH 自带的 `ui-subagent` 子代理导航。卸载插件后，该 bundle 层会移除，底层的 `ui-subagent` 设置自动恢复。请重启现有的 `dsh web` 进程，然后刷新：
 
 ```text
 http://127.0.0.1:3080
 ```
 
-如需关闭 DSH 自带的子代理导航 UI，可启用 patch 中可选的 `ui-subagent` disable 配置。
+如果之前在 `$DSH_HOME/profiles/web/cordis.patch.yml` 中手动禁用了 `ui-subagent`，测试自动恢复前请移除那条手动配置；插件不会覆盖用户自己的设置。
 
 ## 数据边界与兼容性
 
