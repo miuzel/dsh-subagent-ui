@@ -1,0 +1,30 @@
+{
+  "name": "dsh-subagent-workspace-ui",
+  "version": "1.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Searchable workspace subagent manager for DeepSeek Harness Web",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "scripts": {
+    "check": "node --check lib/client.js && node --check lib/index.js"
+  }
+}

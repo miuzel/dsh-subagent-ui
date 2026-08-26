@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build and test output
+dist/
+build/
+out/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+
+# Runtime logs and local data
+*.log
+logs/
+.tmp/
+tmp/
+.cache/
+**/.dsh-graph/
+
+# Environment files (keep committed examples/templates)
+.env
+.env.*
+!.env.example
+!.env.template
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Editor and IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local test artifacts
+playwright-report/
+test-results/
+

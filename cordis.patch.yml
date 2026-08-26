@@ -1,0 +1,10 @@
+# Add this row to $DSH_HOME/profiles/web/cordis.patch.yml after installing this package.
+- insert:
+    - id: subagent-workspace-manager
+      name: 'dsh-subagent-workspace-ui'
+
+# Optional: disable the stock lineage dropdown once this manager is installed.
+# The manager itself uses the standard header-actions slot and does not replace
+# the entire conversation header.
+# - id: ui-subagent
+#   disabled: true
