@@ -4,6 +4,10 @@
   "type": "module",
   "description": "Searchable workspace subagent manager for DeepSeek Harness Web",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/miuzel/dsh-subagent-ui.git"
+  },
   "files": [
     "lib",
     "README.md",
@@ -18,6 +22,9 @@
     "./package.json": "./package.json"
   },
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
