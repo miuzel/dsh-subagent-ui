@@ -38,4 +38,5 @@ Thumbs.db
 # Local test artifacts
 playwright-report/
 test-results/
+.dsh-plugin-smoke/
 
