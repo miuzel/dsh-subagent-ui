@@ -20,7 +20,11 @@ A Web client plugin that adds a **子代理管理** button to the conversation-h
 
 ## Screenshot guide
 
-The panel screenshot demonstrates the compact layout:
+The screenshots demonstrate the compact manager and active-agent floating panel:
+
+![Subagent manager panel](docs/images/screenshot-1.png)
+
+![Active subagent floating panel](docs/images/screenshot-2.png)
 
 1. **Header** — title, current-session/workspace counts, and close action.
 2. **Search and scope row** — ordinary name/title/workspace search, with `id: xxx` reserved for Session ID search; workspace, session, sorting, and grouping selectors stay on one compact row.
