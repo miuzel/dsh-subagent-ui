@@ -42,7 +42,7 @@ Confirm the package version in `package.json` and complete npm 2FA when prompted
 ./test.sh [PORT]
 ```
 
-The script sets `DSH_HOME=/tmp/dsh-test`, removes and re-adds this local plugin to the Web profile, then starts `dsh web --port ${PORT:-8084}` (defaults to port 8084 if omitted). It is an environment-dependent smoke setup, not a unit-test runner.
+The script sets `DSH_HOME="$HOME/tmp/dsh-test"`, removes and re-adds this local plugin to the Web profile, then starts `dsh web --port ${PORT:-8084}` (defaults to port 8084 if omitted). It is an environment-dependent smoke setup, not a unit-test runner.
 
 ### Build / test / lint
 

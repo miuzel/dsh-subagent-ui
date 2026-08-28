@@ -1,4 +1,4 @@
-export DSH_HOME=/tmp/dsh-test
+export DSH_HOME="$HOME/tmp/dsh-test"
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 cd "$SCRIPT_DIR"
