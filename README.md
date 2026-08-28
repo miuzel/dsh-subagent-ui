@@ -56,3 +56,8 @@ A full persistent workspace-wide archive view requires a host-side catalog RPC (
 ```bash
 pnpm run check
 ```
+
+## Acknowledgements
+
+- Subagent permanent deletion and session cleanup design inspired by and referencing [@heiheiha798/dsh-plugin-subagent-delete](https://github.com/heiheiha798/dsh-plugin-subagent-delete).
+
