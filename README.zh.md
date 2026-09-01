@@ -2,7 +2,7 @@
 
 面向 DeepSeek Harness Web 的子代理管理插件。插件在会话标题栏提供一个紧凑的 `🧩 子代理 active/total` 入口，用于搜索、筛选、分组、排序、查看和批量归档当前运行时已发现的子代理。
 
-当前发布版本：**v1.2.0**
+当前发布版本：**v1.3.1**
 
 ## 主要功能
 
@@ -132,15 +132,22 @@
 
 ### 实时活动与流式输出
 
-当 DSH 会话 API 提供绑定会话和对话快照时，卡片底部会显示实时活动：
+当 DSH 会话 API 提供绑定会话与实时事件时，卡片底部会显示实时活动：
 
 - 最新两行模型文本或思考文本。
-- 正在运行的工具调用，例如 `Read`、`Bash`。
+- 正在运行的工具调用，例如 `Read`、`Bash`（优先显示工具说明或目标文件名）。
 - 最近完成的工具调用及成功/失败状态。
 - 上下文注入，例如 `skill-catalog` 或插件系统提示。
 - 命令状态。
 
 实时输出具有金属光泽扫光动效；子代理结束后保留最后显示快照，并变为灰色。输出区域最多显示两行，避免持续滚动导致内容难以阅读。
+
+**兼容两个 API 代际（自动探测）**：
+
+- dsh **0.1.2-alpha.2**：使用 `binding.eventSource`（原始 `SessionEvent` 事件流）推导实时输出。
+- dsh **0.1.1-rc.2** 及更早：回退 `session.getSnapshot().chat.legacy`（对话快照）路径。
+
+按能力探测自动切换，向前兼容，老版本行为不变。
 
 ## 界面说明
 
@@ -183,15 +190,21 @@ http://127.0.0.1:3080
 
 插件只管理当前 DSH Web 客户端运行时已经发现的子代理目录，不伪造不存在的历史数据。首次加载以 40 条为一页；普通分页可以继续加载，批量时间选择最多扩展到 1000 条。
 
-公共 `SessionSummary` 不保证提供原始提示词、provider/model 或全部历史日志，因此插件不会查询或显示 provider/model。实时输出依赖公开的绑定会话接口：
+公共 `SessionSummary` 不保证提供原始提示词、provider/model 或全部历史日志，因此插件不会查询或显示 provider/model。实时输出按能力探测自动切换两种公开接口：
 
 ```text
+# dsh 0.1.2-alpha.2（新 API）：绑定的事件源
+sessions.binding(childId).eventSource
+→ open()
+→ getSnapshot().entries   # 原始 SessionEvent：assistant/chunk、tool/call、tool/result…
+
+# dsh 0.1.1-rc.2 及更早（旧 API）：对话快照
 sessions.binding(childId).session
 → session.open()
 → session.getSnapshot().chat.legacy
 ```
 
-如果宿主没有提供对应的对话快照，插件只能显示持久化的会话摘要和统计信息。
+如果在当前宿主拿不到对应的实时数据，插件只能显示持久化的会话摘要和统计信息。本版本兼容 **dsh 0.1.2-alpha.2** 与 **0.1.1-rc.2**。
 
 归档、分类和最近使用顺序保存在浏览器本地 `localStorage` 中，不会写入 DSH 会话日志。
 
@@ -210,9 +223,26 @@ pnpm run check
 - `lib/client.js`
 - `lib/index.js`
 
+### 冒烟测试（可指定 dsh 版本）
+
+```bash
+./test.sh                          # 本地 dsh 跑 web，端口 8084
+./test.sh 8085                     # 指定端口
+DSH_VERSION=0.1.1-rc.2 ./test.sh   # 用 pnpx 拉取指定 dsh 版本跑 web（默认经 proxychains4 -q 走代理）
+```
+
+`DSH_HOME` 固定为 `$HOME/tmp/dsh-test`；`DSH_VERSION` 非空时用 `pnpx @deepseek-ai/dsh@<version>` 运行，可用于冒烟测试旧版本（如 0.1.1-rc.2）的兼容性。
+
 ## 致谢与参考
 
 - 子代理永久删除、会话生命周期清理及快照刷新机制的设计参考并致谢开源项目：[@heiheiha798/dsh-plugin-subagent-delete](https://github.com/heiheiha798/dsh-plugin-subagent-delete)。
+
+## v1.3.1 发布说明
+
+- **兼容 dsh 0.1.2-alpha.2 与 0.1.1-rc.2**：实时输出按能力探测自动切换两条链路——新版本（0.1.2-alpha.2）走 `binding.eventSource` 原始事件流推导；旧版本（0.1.1-rc.2 及更早）回退 `chat.legacy` 对话快照。老版本行为不变，向前兼容。
+- **实时工具调用显示说明/文件名**：进行中与已完成的工具调用现在优先显示工具 `description` 或目标 `path/file_path`（例如 `bash · Print current working directory`、`write · subagent-AJ.txt`），不再只有工具名。工具参数跨分片累积，参数完整后才渲染详情，避免流式过程中显示残缺 JSON。
+- **清理**：移除已不存在的 `dsh-client-runtime` 客户端注入引用。
+- **测试脚本支持指定版本**：`DSH_VERSION=0.1.1-rc.2 ./test.sh` 可冒烟测试旧版本兼容性。
 
 ## v1.2.4 发布说明
 

@@ -49,12 +49,23 @@ If you previously disabled `ui-subagent` manually in `$DSH_HOME/profiles/web/cor
 
 The public DSH Web session store exposes subagent summaries that have been discovered in the current browser runtime. It deliberately does not expose a global historical subagent index or a mode for every unvisited child. Therefore this first plugin version manages the discovered catalog; rows whose type is not yet loaded remain visible and searchable and fall back to DSH's retained session navigation. Exact catalog navigation is used automatically as soon as DSH supplies the address and mode.
 
-A full persistent workspace-wide archive view requires a host-side catalog RPC (or an upstream DSH API) that enumerates every child address and its mode. The public `SessionSummary` does not expose the original prompt or provider/model route, so those are intentionally not queried or displayed. Live output and tool/context activity use the documented bound-session conversation snapshot when the session can be opened; if the host does not publish that snapshot, the panel falls back to the durable summary. The UI is isolated in [`lib/client.js`](lib/client.js), so it can switch to a richer source without changing the panel interaction model.
+A full persistent workspace-wide archive view requires a host-side catalog RPC (or an upstream DSH API) that enumerates every child address and its mode. The public `SessionSummary` does not expose the original prompt or provider/model route, so those are intentionally not queried or displayed. Live output and tool/context activity are read from the bound session automatically: on dsh **0.1.2-alpha.2** they are derived from the raw `binding.eventSource` event stream (showing the tool description or target filename), while older hosts (e.g. **0.1.1-rc.2**) fall back to `session.getSnapshot().chat.legacy`. Capability detection selects the path, so the plugin stays forward compatible. If the host publishes neither, the panel falls back to the durable summary. The UI is isolated in [`lib/client.js`](lib/client.js), so it can switch to a richer source without changing the panel interaction model.
+
+## Compatibility
+
+v1.3.1 is compatible with dsh **0.1.2-alpha.2** (new `binding.eventSource` live-output path) and **0.1.1-rc.2** (legacy `chat.legacy` snapshot path). Live output is selected by capability detection, so older hosts behave as before.
 
 ## Validation
 
 ```bash
 pnpm run check
+```
+
+Smoke-test a specific dsh version:
+
+```bash
+./test.sh                                      # local dsh, port 8084
+DSH_VERSION=0.1.1-rc.2 ./test.sh               # pnpx @deepseek-ai/dsh@0.1.1-rc.2 (via proxychains4 -q)
 ```
 
 ## Acknowledgements
