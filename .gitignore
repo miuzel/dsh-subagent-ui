@@ -40,3 +40,6 @@ playwright-report/
 test-results/
 .dsh-plugin-smoke/
 
+# Lockfile (published npm lib with peer-only deps; keep the tree clean for git-checks)
+pnpm-lock.yaml
+
