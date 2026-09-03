@@ -55,6 +55,13 @@ A full persistent workspace-wide archive view requires a host-side catalog RPC (
 
 v1.3.1 is compatible with dsh **0.1.2-alpha.2** (new `binding.eventSource` live-output path) and **0.1.1-rc.2** (legacy `chat.legacy` snapshot path). Live output is selected by capability detection, so older hosts behave as before.
 
+## v1.3.3
+
+- **Fix**: batch delete no longer errors on large selections (host request-body limit raised to 8 MiB).
+- **Feature**: with details hidden, hovering a row/name shows the stats (`输入/输出 · 缓存命中 · 轮数 · 步数`) via the title tooltip.
+- **Fix**: live output now shows context injection (`上下文注入 · <form>`) and the thinking state.
+- **Feature**: while thinking, a rotating "思考中…" spinner indicates the state instead of the low-priority reasoning text.
+
 ## v1.3.2
 
 - **Performance**: the manager now does one base scan (`subagentRows`) and derives `allRows`/`activeRows`/`tabCounts` from it (no repeated full scans or `modeMap` merges), `tabCounts` is computed from a deferred value and is skipped while the panel is closed, and `useSessions` subscribes only the fields the manager reads. Live output is capped to a few simultaneous subagents (`liveCap`, default 3, `0` = unlimited) and fully releases its subscriptions when live display is off or the float/panel is closed.
