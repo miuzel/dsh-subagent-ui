@@ -36,6 +36,18 @@ npm publish --access public
 
 Confirm the package version in `package.json` and complete npm 2FA when prompted.
 
+### Release discipline (default after every release)
+
+After each feature/fix set is tested and you are asked to release, follow this order:
+
+1. On the current dev branch: bump `package.json` version and update the release notes (README.zh.md release-notes block at the top, and a short `## vX.Y.Z` section in README.md).
+2. Run `node --check` on both lib files for syntax.
+3. Merge the dev branch into `main` (fast-forward when `main` has not diverged).
+4. Create an annotated tag on `main` at the release commit, e.g. `git tag -a vX.Y.Z -m "Release vX.Y.Z"`.
+5. **Clean up the old dev branch** and **create the next dev branch** from `main`, e.g. `git checkout -b vNext-dev` then `git branch -d <old-dev>`. This is the standing discipline: every release ends with a fresh dev branch off `main` and the old one removed.
+
+`pnpm publish` git-checks only require a clean working tree (not a tagged HEAD); a stray generated `pnpm-lock.yaml` is gitignored so it does not dirty the tree.
+
 ### Smoke run
 
 ```bash
