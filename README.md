@@ -79,10 +79,10 @@ The client bundle `lib/client.js` is **generated from the TypeScript sources** i
 ```bash
 pnpm install      # dev deps: sucrase + typescript
 pnpm run build    # scripts/build.mjs -> lib/client.js
-pnpm run check    # build + golden verify + tsc --noEmit + node --check lib/index.js
+pnpm run check    # build + tsc --noEmit + node --check lib/index.js + bundle freshness gate
 ```
 
-`pnpm run verify:build` proves the generated bundle is identical to the hand-written pre-refactor bundle (git ref `v1.3.4`) up to insignificant whitespace, using token-level and line-level comparison.
+`pnpm run verify:build` compares the generated bundle with the hand-written pre-refactor bundle (git ref `v1.3.4`) up to insignificant whitespace, using token-level and line-level comparison. After the migration it doubles as a delta viewer that prints the exact differences of any intentional change.
 
 Smoke-test a specific dsh version:
 

@@ -26,9 +26,9 @@ After the plugin is available, restart the existing `dsh web` process and refres
 pnpm run check
 ```
 
-`check` rebuilds `lib/client.js` from the TypeScript sources (`scripts/build.mjs`, which also runs `node --check` on the bundle), verifies the generated bundle against the pre-refactor golden (`scripts/verify-build.mjs`, token- and line-level comparison that ignores insignificant whitespace), runs `tsc --noEmit` on `src/client`, and finally runs `node --check` on `lib/index.js`. Individual steps: `pnpm run build`, `pnpm run verify:build`, `pnpm run typecheck`.
+`check` rebuilds `lib/client.js` from the TypeScript sources (`scripts/build.mjs`, which also runs `node --check` on the bundle), runs `tsc --noEmit` on `src/client`, runs `node --check` on `lib/index.js`, and finally runs the bundle-freshness gate (`scripts/verify-fresh.mjs`, which fails only when the sources are unchanged vs HEAD but the rebuilt bundle differs — i.e. a stale committed bundle). Individual steps: `pnpm run build`, `pnpm run verify:build`, `pnpm run typecheck`.
 
-The golden comparison in `verify:build` defaults to git ref `v1.3.4` (the last hand-written bundle). It is the one-time migration proof that the TypeScript rewrite did not alter behavior; pass another ref as `node scripts/verify-build.mjs <ref>` if needed.
+The golden comparison in `verify:build` defaults to git ref `v1.3.4` (the last hand-written bundle). It is the one-time migration proof that the TypeScript rewrite did not alter behavior, and afterwards a delta viewer: any intentional behavior change shows up as the exact token/line differences (the first post-migration example is the `scopeKey` → `workspaceKey` latent-bug fix). Pass another ref as `node scripts/verify-build.mjs <ref>` if needed.
 
 ### Publish
 
@@ -62,7 +62,7 @@ The script sets `DSH_HOME="$HOME/tmp/dsh-test"`, removes and re-adds this local 
 
 ### Build / test / lint
 
-There is no project-defined `test` or `lint` script and no test or lint configuration in the repository. The build step is `pnpm run build` (sucrase type-erasure plus a deterministic linker in `scripts/build.mjs`); the checked-in client bundle `lib/client.js` is its output. `pnpm run check` performs full validation (build + golden verify + `tsc --noEmit` + `node --check lib/index.js`).
+There is no project-defined `test` or `lint` script and no test or lint configuration in the repository. The build step is `pnpm run build` (sucrase type-erasure plus a deterministic linker in `scripts/build.mjs`); the checked-in client bundle `lib/client.js` is its output. `pnpm run check` performs full validation (build + `tsc --noEmit` + `node --check lib/index.js` + bundle freshness).
 
 ## Code style and conventions
 
@@ -82,7 +82,8 @@ There is no project-defined `test` or `lint` script and no test or lint configur
 - `lib/client.js` — **generated** browser bundle (manager UI, styles, filtering, archive state, live activity rendering, DSH session/slot integration). Do not edit; run `pnpm run build`.
 - `src/client/` — TypeScript sources of the client bundle, concatenated in original bundle order: `types.ts` (types-only), `ambient.d.ts` (React/jsx/`sessionsRt` declarations), `styles.ts` (css), `bootstrap.ts`, `format.ts`, `runtime.ts`, `live-output.ts`, `detail.ts`, `live-events.ts`, `active-float.ts`, `manager.ts`, `i18n.ts`, `apply.ts`.
 - `scripts/build.mjs` — builds `lib/client.js` from `src/client/` (sucrase + linker + wrapper).
-- `scripts/verify-build.mjs` — proves the generated bundle matches the pre-refactor golden (default ref `v1.3.4`) up to insignificant whitespace (token-level and line-level comparison).
+- `scripts/verify-build.mjs` — migration proof / delta viewer: compares the generated bundle with the pre-refactor golden (default ref `v1.3.4`) up to insignificant whitespace (token-level and line-level comparison) and prints any intentional differences.
+- `scripts/verify-fresh.mjs` — bundle freshness gate used by `pnpm run check` (fails on a stale committed bundle).
 - `docs/images/` — README screenshots (`screenshot-1.png` and `screenshot-2.png`).
 - `cordis.patch.yml` — bundle patch that inserts this plugin and disables DSH’s stock `ui-subagent` lineage dropdown while installed.
 - `test.sh` — local DSH Web smoke setup described above.

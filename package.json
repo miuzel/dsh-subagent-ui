@@ -41,7 +41,7 @@
     "build": "node scripts/build.mjs",
     "verify:build": "node scripts/verify-build.mjs",
     "typecheck": "tsc --noEmit",
-    "check": "node scripts/build.mjs && node scripts/verify-build.mjs && tsc --noEmit && node --check lib/index.js"
+    "check": "node scripts/build.mjs && tsc --noEmit && node --check lib/index.js && node scripts/verify-fresh.mjs"
   },
   "devDependencies": {
     "sucrase": "^3.35.1",
