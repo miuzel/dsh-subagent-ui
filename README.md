@@ -57,7 +57,7 @@ v1.3.1 is compatible with dsh **0.1.2-alpha.2** (new `binding.eventSource` live-
 
 ## v1.3.4
 
-- **Feature**: the whole UI is localized through DSH client-locale (zh/en, AI-assisted English strings). Labels, buttons, stats, live output (context injection / thinking / tool details) and confirm dialogs now use translation keys and follow the host language.
+- **Feature**: the whole UI is localized through DSH client-locale (zh/en, AI-assisted English strings). Labels, buttons, stats, live output (context injection / thinking / tool details) and confirm dialogs now use translation keys and follow the host language. Contributed by [@Marcuss2](https://github.com/Marcuss2) in [PR #1](https://github.com/miuzel/dsh-subagent-ui/pull/1) — thank you!
 
 ## v1.3.3
 
@@ -87,5 +87,6 @@ DSH_VERSION=0.1.1-rc.2 ./test.sh               # pnpx @deepseek-ai/dsh@0.1.1-rc.
 
 ## Acknowledgements
 
+- UI localization (zh/en) contributed by [@Marcuss2](https://github.com/Marcuss2) via [PR #1](https://github.com/miuzel/dsh-subagent-ui/pull/1) — many thanks!
 - Subagent permanent deletion and session cleanup design inspired by and referencing [@heiheiha798/dsh-plugin-subagent-delete](https://github.com/heiheiha798/dsh-plugin-subagent-delete).
 

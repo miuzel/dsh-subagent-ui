@@ -235,11 +235,12 @@ DSH_VERSION=0.1.1-rc.2 ./test.sh   # 用 pnpx 拉取指定 dsh 版本跑 web（�
 
 ## 致谢与参考
 
+- UI 本地化（zh/en）由 [@Marcuss2](https://github.com/Marcuss2) 在 [PR #1](https://github.com/miuzel/dsh-subagent-ui/pull/1) 中贡献，特此致谢！
 - 子代理永久删除、会话生命周期清理及快照刷新机制的设计参考并致谢开源项目：[@heiheiha798/dsh-plugin-subagent-delete](https://github.com/heiheiha798/dsh-plugin-subagent-delete)。
 
 ## v1.3.4 发布说明
 
-- **特性：UI 本地化（zh/en）**：通过 DSH client-locale 将插件全部 UI 文案本地化，支持中文/英文（英文为 AI 辅助翻译）。标签、按钮、统计、实时输出（上下文注入 / 思考中 / 工具说明）、确认弹窗等均改为走翻译键；跟随宿主语言切换。
+- **特性：UI 本地化（zh/en）**：通过 DSH client-locale 将插件全部 UI 文案本地化，支持中文/英文（英文为 AI 辅助翻译）。标签、按钮、统计、实时输出（上下文注入 / 思考中 / 工具说明）、确认弹窗等均改为走翻译键；跟随宿主语言切换。由 [@Marcuss2](https://github.com/Marcuss2) 在 [PR #1](https://github.com/miuzel/dsh-subagent-ui/pull/1) 中贡献，感谢！
 
 ## v1.3.3 发布说明
 
