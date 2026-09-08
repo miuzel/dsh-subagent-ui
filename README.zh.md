@@ -210,18 +210,15 @@ sessions.binding(childId).session
 
 ## 开发与验证
 
-插件的主要客户端实现位于 [`lib/client.js`](lib/client.js)，宿主入口位于 [`lib/index.js`](lib/index.js)。
-
-执行语法检查：
+插件的客户端实现自 v1.4.0 起使用 TypeScript 编写，位于 [`src/client/`](src/client/)；发布产物 [`lib/client.js`](lib/client.js) 由构建脚本生成，**不要直接编辑**。宿主入口 [`lib/index.js`](lib/index.js) 仍为手写。
 
 ```bash
-pnpm run check
+pnpm install      # 安装开发依赖（sucrase + typescript）
+pnpm run build    # scripts/build.mjs 从 src/client 生成 lib/client.js
+pnpm run check    # 构建 + golden 校验 + tsc --noEmit + node --check lib/index.js
 ```
 
-当前检查命令覆盖：
-
-- `lib/client.js`
-- `lib/index.js`
+`pnpm run verify:build` 会对生成的 `lib/client.js` 与改造前的手写版本（git 引用 `v1.3.4`）做 token 级与行级比对，证明除无关空白外逐字符一致。
 
 ### 冒烟测试（可指定 dsh 版本）
 

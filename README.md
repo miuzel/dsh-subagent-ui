@@ -74,9 +74,15 @@ v1.3.1 is compatible with dsh **0.1.2-alpha.2** (new `binding.eventSource` live-
 
 ## Validation
 
+The client bundle `lib/client.js` is **generated from the TypeScript sources** in [`src/client/`](src/client/) — edit those, never the bundle, then rebuild:
+
 ```bash
-pnpm run check
+pnpm install      # dev deps: sucrase + typescript
+pnpm run build    # scripts/build.mjs -> lib/client.js
+pnpm run check    # build + golden verify + tsc --noEmit + node --check lib/index.js
 ```
+
+`pnpm run verify:build` proves the generated bundle is identical to the hand-written pre-refactor bundle (git ref `v1.3.4`) up to insignificant whitespace, using token-level and line-level comparison.
 
 Smoke-test a specific dsh version:
 

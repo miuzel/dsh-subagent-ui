@@ -38,6 +38,13 @@
     "@deepseek-ai/cordis": "^4.0.1"
   },
   "scripts": {
-    "check": "node --check lib/client.js && node --check lib/index.js"
+    "build": "node scripts/build.mjs",
+    "verify:build": "node scripts/verify-build.mjs",
+    "typecheck": "tsc --noEmit",
+    "check": "node scripts/build.mjs && node scripts/verify-build.mjs && tsc --noEmit && node --check lib/index.js"
+  },
+  "devDependencies": {
+    "sucrase": "^3.35.1",
+    "typescript": "^7.0.2"
   }
 }
