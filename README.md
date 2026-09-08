@@ -55,6 +55,10 @@ A full persistent workspace-wide archive view requires a host-side catalog RPC (
 
 v1.3.1 is compatible with dsh **0.1.2-alpha.2** (new `binding.eventSource` live-output path) and **0.1.1-rc.2** (legacy `chat.legacy` snapshot path). Live output is selected by capability detection, so older hosts behave as before.
 
+## v1.3.4
+
+- **Feature**: the whole UI is localized through DSH client-locale (zh/en, AI-assisted English strings). Labels, buttons, stats, live output (context injection / thinking / tool details) and confirm dialogs now use translation keys and follow the host language.
+
 ## v1.3.3
 
 - **Fix**: batch delete no longer errors on large selections (host request-body limit raised to 8 MiB).

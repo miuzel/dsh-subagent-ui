@@ -2,7 +2,7 @@
 
 面向 DeepSeek Harness Web 的子代理管理插件。插件在会话标题栏提供一个紧凑的 `🧩 子代理 active/total` 入口，用于搜索、筛选、分组、排序、查看和批量归档当前运行时已发现的子代理。
 
-当前发布版本：**v1.3.3**
+当前发布版本：**v1.3.4**
 
 ## 主要功能
 
@@ -236,6 +236,10 @@ DSH_VERSION=0.1.1-rc.2 ./test.sh   # 用 pnpx 拉取指定 dsh 版本跑 web（�
 ## 致谢与参考
 
 - 子代理永久删除、会话生命周期清理及快照刷新机制的设计参考并致谢开源项目：[@heiheiha798/dsh-plugin-subagent-delete](https://github.com/heiheiha798/dsh-plugin-subagent-delete)。
+
+## v1.3.4 发布说明
+
+- **特性：UI 本地化（zh/en）**：通过 DSH client-locale 将插件全部 UI 文案本地化，支持中文/英文（英文为 AI 辅助翻译）。标签、按钮、统计、实时输出（上下文注入 / 思考中 / 工具说明）、确认弹窗等均改为走翻译键；跟随宿主语言切换。
 
 ## v1.3.3 发布说明
 
