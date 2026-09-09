@@ -8,6 +8,18 @@ The package is ESM (`"type": "module"`) and publishes the `lib/` directory. Its 
 
 Since v1.4.0 the client bundle is **generated from TypeScript sources**: `lib/client.js` is built from `src/client/*.ts` by `scripts/build.mjs` and must never be edited directly.
 
+## Workflow cadence (core memo)
+
+**Branches**: `main` carries released versions only. All development happens on the current `<version>-dev` branch cut from `main` (e.g. `1.4.0-dev`). Commit message prefixes follow history: `feat:` / `fix:` / `refactor:` / `docs:` / `chore:`.
+
+**Daily loop**: edit `src/client/*.ts` (never `lib/client.js`) → `pnpm run build` → `pnpm run check` → commit the sources and the regenerated bundle **together** → re-add the plugin (`dsh plugin --profile web add file:.`), restart `dsh web`, and refresh `http://127.0.0.1:3080` to smoke-test (or run `./test.sh [PORT]`). Host-entry (`lib/index.js`) changes always require a `dsh web` restart to take effect.
+
+**Verification layers**: ① `pnpm run check` — build + `tsc --noEmit` + `node --check lib/index.js` + bundle-freshness gate; ② `node scripts/verify-build.mjs [ref]` — token/line-level comparison against the `v1.3.4` hand-written golden (the migration proof; afterwards a delta viewer that prints the exact differences of any intentional change); ③ smoke — `./test.sh [PORT]`, and `DSH_VERSION=0.1.1-rc.2 ./test.sh` for legacy-API compatibility.
+
+**Release rhythm** (details under "Release discipline" below): on the dev branch bump the version + write release notes → run the full check → fast-forward merge to `main` → annotated tag `vX.Y.Z` → delete the old dev branch and open the next one off `main`. The owner runs `npm publish --access public` manually (npm 2FA) and pushes `origin main --tags` plus the dev branch. External contributions are reviewed, merged into the dev branch, and credited in the README acknowledgements and release notes (precedent: PR #1 by @Marcuss2).
+
+**Board**: this workspace uses dsh-graph (`.dsh-graph/`, gitignored) for goal tracking; run `graph_*` tools only from the repository root so they resolve the correct graph root.
+
 ## Common commands
 
 Run commands from the repository root.
