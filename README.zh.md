@@ -2,7 +2,7 @@
 
 面向 DeepSeek Harness Web 的子代理管理插件。插件在会话标题栏提供一个紧凑的 `🧩 子代理 active/total` 入口，用于搜索、筛选、分组、排序、查看和批量归档当前运行时已发现的子代理。
 
-当前发布版本：**v1.3.4**
+当前发布版本：**v1.4.0**
 
 ## 主要功能
 
@@ -204,7 +204,7 @@ sessions.binding(childId).session
 → session.getSnapshot().chat.legacy
 ```
 
-如果在当前宿主拿不到对应的实时数据，插件只能显示持久化的会话摘要和统计信息。本版本兼容 **dsh 0.1.2-alpha.2** 与 **0.1.1-rc.2**。
+如果在当前宿主拿不到对应的实时数据，插件只能显示持久化的会话摘要和统计信息。本版本支持 **dsh 0.1.5-rc.2**，并向下兼容所有 DeepSeek Harness 版本（0.1.2 系列能力探测路径为首选分支，**0.1.1-rc.2** legacy 回退路径保持不变）。
 
 归档、分类和最近使用顺序保存在浏览器本地 `localStorage` 中，不会写入 DSH 会话日志。
 
@@ -234,6 +234,12 @@ DSH_VERSION=0.1.1-rc.2 ./test.sh   # 用 pnpx 拉取指定 dsh 版本跑 web（�
 
 - UI 本地化（zh/en）由 [@Marcuss2](https://github.com/Marcuss2) 在 [PR #1](https://github.com/miuzel/dsh-subagent-ui/pull/1) 中贡献，特此致谢！
 - 子代理永久删除、会话生命周期清理及快照刷新机制的设计参考并致谢开源项目：[@heiheiha798/dsh-plugin-subagent-delete](https://github.com/heiheiha798/dsh-plugin-subagent-delete)。
+
+## v1.4.0 发布说明
+
+- **支持 DeepSeek Harness 0.1.5-rc.2，向下兼容所有 dsh 版本**：适配 0.1.5-rc.2 的对话页视图结构变化（slot 渲染器不再向未声明 store 的注册项注入 `actions`；视图选择改为按会话持久化，新增「轨迹」等标签页）——点击子代理重新正确落回「对话」标签页（`actions` 缺失时改为点击宿主自身的「对话」标签完成切换，激活与持久化语义完整）。0.1.2 系列能力探测路径保留为首选分支、调用方式不变，0.1.1 legacy 回退路径零改动，旧版本行为完全一致。
+- **客户端迁移至 TypeScript**：`src/client/*.ts` 成为唯一源码，`lib/client.js` 由 `pnpm run build`（sucrase 逐字类型擦除 + 确定性链接）生成，不再手写。新增 `verify-build`（与 v1.3.4 手写 golden 做 token/行级比对——迁移等价证明兼有意改动差异查看器）与 `verify-fresh`（过期 bundle 门禁）；`pnpm run check` 一键完成构建 + 类型检查 + 语法检查 + 新鲜度校验。
+- **修复：筛选摘要潜伏 ReferenceError**：折叠筛选区且选中具体工作区时，`scopeKey` 未定义变量导致报错，已修正为 `workspaceKey`（TS 迁移期间发现）。
 
 ## v1.3.4 发布说明
 
