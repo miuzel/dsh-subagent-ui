@@ -55,7 +55,8 @@ export interface ParentSubagents {
 export interface SessionState {
   byId: Record<string, SessionSummary>
   subagentsByParent: Record<string, ParentSubagents>
-  current: string
+  /* dsh 0.1.6-alpha.2 removed this field (selection moved to uiWorkspace). */
+  current?: string
 }
 
 /** Anything with an optional cwd (session summaries and ad-hoc literals). */
@@ -253,6 +254,15 @@ export interface SessionsRuntime {
   setSubagentCatalogOpen?: (parentId: string, open: boolean) => void
 }
 
+/**
+ * The ctx.uiWorkspace navigation face. The service itself is provided from
+ * dsh 0.1.2 on, but openSession only exists from 0.1.5-rc.2; runtimes before
+ * that keep the other methods, so both layers are optional here.
+ */
+export interface UiWorkspaceRuntime {
+  openSession?: (target: unknown) => void
+}
+
 /* ------------------------------------------------------------------ */
 /* Component props.                                                    */
 /* ------------------------------------------------------------------ */
@@ -284,8 +294,8 @@ export interface ActiveFloatProps {
 export interface ManagerProps {
   t: Tr
   useSessions: <T>(selector: (state: SessionState) => T, equal?: (a: T, b: T) => boolean) => T
-  openChild: (address: unknown) => void
-  openSession: (sessionId: string) => void
+  openChild: (address: unknown) => boolean
+  openSession: (sessionId: string) => boolean
   refresh: (parentId: string) => void
   setCatalogOpen: (parentId: string, open: boolean) => void
   sessionId?: string
@@ -301,4 +311,6 @@ export interface PluginCtx {
     inject: (slot: string, factory: () => unknown) => void
     register: (config: Record<string, unknown>, component: unknown) => void
   }
+  /* Optional-service probe (dsh client root contexts expose ctx.get). */
+  get?: (name: string) => unknown
 }
