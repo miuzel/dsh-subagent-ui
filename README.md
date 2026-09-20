@@ -56,21 +56,22 @@ A full persistent workspace-wide archive view requires a host-side catalog RPC (
 v1.5.0 supports dsh **0.1.6-alpha.2** and stays backward compatible with all DeepSeek Harness versions. Opening a subagent session is capability-detected at runtime and degrades in three tiers:
 
 ```text
-# dsh 0.1.5-rc.2 / 0.1.6-alpha.2 and later: the workspace navigation service
-ctx.get('uiWorkspace').openSession({ parentSessionId, childSessionId, mode } | sessionId)
-
-# dsh 0.1.6-alpha.1 and earlier: the session controller entry points
+# dsh 0.1.2-alpha.5 .. 0.1.6-alpha.1: the session controller entry points
 ctx.sessions.openSubagent(address)   # exact child address
 ctx.sessions.open(sessionId)         # retained session navigation
+
+# dsh 0.1.6-alpha.2 and later: the workspace navigation service
+ctx.get('uiWorkspace').openSession({ parentSessionId, childSessionId, mode } | sessionId)
 
 # neither is available: the click reports that the host has no session navigation API
 ```
 
-`uiWorkspace` is read through `ctx.get('uiWorkspace')`, never through a required injection, so hosts that do not register the service (everything before **0.1.5-rc.2**) still load and keep using the session-controller path, while hosts that removed `openSubagent`/`open` (**0.1.6-alpha.2**) use the workspace service. Within the service path the exact `{ parentSessionId, childSessionId, mode }` address is passed straight through; on the session-controller path the address is used first and only a missing mode/child falls back to plain session navigation, because `openSubagent` rejects addresses that are not healthy catalog children. The 0.1.2-series capability paths (live output via `binding.eventSource`, chat-tab switch via slot `actions`) remain the primary branches, and the **0.1.1-rc.2** legacy fallbacks (`chat.legacy` snapshot) are unchanged.
+`uiWorkspace` is read through `ctx.get('uiWorkspace')`, never through a required injection, so hosts that do not register the service (everything before **0.1.2-alpha.5**) still load and keep using the session-controller path, while hosts that removed `openSubagent`/`open` (**0.1.6-alpha.2**) use the workspace service. **The probe order follows the argument shape, not the version**: `sessions.openSubagent` accepts an address object on every host that has it, whereas `uiWorkspace.openSession` only accepts a `SessionTarget` from **0.1.6-alpha.2** on — on **0.1.5-alpha.2 … 0.1.6-alpha.1** it is `openSession(sessionId)` and routes through `sessions.open(id)`, which throws on an address. The session-controller tier is therefore tried first and the workspace service is the fallback. Within the controller tier the exact `{ parentSessionId, childSessionId, mode }` address is used first and only a missing mode/child falls back to plain session navigation, because `openSubagent` rejects addresses that are not healthy catalog children. The 0.1.2-series capability paths (live output via `binding.eventSource`, chat-tab switch via slot `actions`) remain the primary branches, and the **0.1.1-rc.2** legacy fallbacks (`chat.legacy` snapshot) are unchanged.
 
 ## v1.5.0
 
-- **Fix**: on DeepSeek Harness **0.1.6-alpha.2** clicking a subagent row failed with `TypeError: ctx.sessions.openSubagent is not a function` (the click was silently swallowed by the row's `try`/`catch`, so the panel just looked dead). 0.1.6-alpha.2 removed `sessions.openSubagent(address)` and `sessions.open(id)`; the plugin now detects the navigation capability at runtime in three tiers (`uiWorkspace.openSession` → `sessions.openSubagent` → `sessions.open`) instead of hard-switching, so the same bundle keeps working on both sides of that upstream change, and the failure is surfaced in the UI when no navigation API exists at all.
+- **Fix**: on DeepSeek Harness **0.1.6-alpha.2** clicking a subagent row failed with `TypeError: ctx.sessions.openSubagent is not a function` (the click was silently swallowed by the row's `try`/`catch`, so the panel just looked dead). 0.1.6-alpha.2 removed `sessions.openSubagent(address)` and `sessions.open(id)`; the plugin now detects the navigation capability at runtime in three tiers (`sessions.openSubagent` → `sessions.open` → `uiWorkspace.openSession`) instead of hard-switching, so the same bundle keeps working on both sides of that upstream change, and the failure is surfaced in the UI when no navigation API exists at all.
+- **Fix**: the tier order above is argument-shape driven, because **0.1.5-alpha.2 … 0.1.6-alpha.1** ships a `uiWorkspace.openSession(sessionId)` that only accepts a string id and throws `sessions.select: unknown session [object Object]` for an address, while `sessions.openSubagent(address)` is still present and does accept one on those hosts. Trying the workspace service first there swallowed that throw and showed the "unsupported version" notice, so the address now goes to the object-capable controller entry point first and `uiWorkspace` remains the fallback for 0.1.6-alpha.2+. Verified live on both sides of the band: on **0.1.5-alpha.1** (client packages 0.1.5-rc.2) the reordered bundle switches session in ~142 ms with no alert and no navigation error, and on **0.1.6-alpha.2** the served bundle still resolves to `uiWorkspace.openSession` and opens the child session.
 - **Fix**: 0.1.6-alpha.2 also dropped the `current` field from the session list snapshot, which the current-session resolution and the Chat-tab fallback relied on. Both now degrade gracefully: the fallback recognizes a missing `current`, tries the host's own Chat tab immediately, and gives up quietly after 2 s instead of polling for 8 s.
 
 ## v1.4.0

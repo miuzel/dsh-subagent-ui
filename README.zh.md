@@ -2,7 +2,7 @@
 
 面向 DeepSeek Harness Web 的子代理管理插件。插件在会话标题栏提供一个紧凑的 `🧩 子代理 active/total` 入口，用于搜索、筛选、分组、排序、查看和批量归档当前运行时已发现的子代理。
 
-当前发布版本：**v1.4.0**
+当前发布版本：**v1.5.0**
 
 ## 主要功能
 
@@ -209,17 +209,17 @@ sessions.binding(childId).session
 ### 打开子代理会话的三级能力探测
 
 ```text
-# dsh 0.1.5-rc.2 / 0.1.6-alpha.2 及以后：工作区导航服务
-ctx.get('uiWorkspace').openSession({ parentSessionId, childSessionId, mode } | sessionId)
-
-# dsh 0.1.6-alpha.1 及更早：会话控制器入口
+# dsh 0.1.2-alpha.5 ~ 0.1.6-alpha.1：会话控制器入口
 ctx.sessions.openSubagent(address)   # 精确子代理地址
 ctx.sessions.open(sessionId)         # 保留的会话导航
+
+# dsh 0.1.6-alpha.2 及以后：工作区导航服务
+ctx.get('uiWorkspace').openSession({ parentSessionId, childSessionId, mode } | sessionId)
 
 # 两者都不存在：提示当前 dsh 版本缺少可用的会话导航接口
 ```
 
-`uiWorkspace` 通过 `ctx.get('uiWorkspace')` 读取，而不是必填注入，因此未注册该服务的宿主（**0.1.5-rc.2** 之前的全部版本）仍能正常加载并继续走会话控制器路径；而移除了 `openSubagent`/`open` 的 **0.1.6-alpha.2** 则走工作区服务。服务路径下会原样传递 `{ parentSessionId, childSessionId, mode }` 精确地址；会话控制器路径下优先使用地址，仅在缺少 mode/child 时才降级为普通会话导航，因为 `openSubagent` 会拒绝非健康目录子项的地址。0.1.2 系列能力探测路径（实时输出走 `binding.eventSource`、对话标签切换走 slot `actions`）仍为首选分支，**0.1.1-rc.2** legacy 回退路径保持不变。本版本支持 **dsh 0.1.6-alpha.2**，并向下兼容所有 DeepSeek Harness 版本。
+`uiWorkspace` 通过 `ctx.get('uiWorkspace')` 读取，而不是必填注入，因此未注册该服务的宿主（**0.1.2-alpha.5** 之前的全部版本）仍能正常加载并继续走会话控制器路径；而移除了 `openSubagent`/`open` 的 **0.1.6-alpha.2** 则走工作区服务。**探测顺序按「参数形态」而不是版本号决定**：`sessions.openSubagent` 在所有带它的宿主上都吃 address 对象，而 `uiWorkspace.openSession` 直到 **0.1.6-alpha.2** 才接受 `SessionTarget`——在 **0.1.5-alpha.2 … 0.1.6-alpha.1** 上它是 `openSession(sessionId)`，内部走 `sessions.open(id)`，传入对象会抛错。因此先试会话控制器一级、把工作区服务作为兜底。控制器路径下优先使用 `{ parentSessionId, childSessionId, mode }` 精确地址，仅在缺少 mode/child 时才降级为普通会话导航，因为 `openSubagent` 会拒绝非健康目录子项的地址。0.1.2 系列能力探测路径（实时输出走 `binding.eventSource`、对话标签切换走 slot `actions`）仍为首选分支，**0.1.1-rc.2** legacy 回退路径保持不变。本版本支持 **dsh 0.1.6-alpha.2**，并向下兼容所有 DeepSeek Harness 版本。
 
 归档、分类和最近使用顺序保存在浏览器本地 `localStorage` 中，不会写入 DSH 会话日志。
 
@@ -254,7 +254,8 @@ DSH_PLUGIN_DIR=.worktrees/x ./test.sh  # 冒烟其它 checkout 的产物
 
 ## v1.5.0 发布说明
 
-- **修复：dsh 0.1.6-alpha.2 点击子代理行无法打开会话**：报错 `TypeError: ctx.sessions.openSubagent is not a function`，且该错误被行点击的 `try`/`catch` 吞掉，界面表现为「点了没反应」。0.1.6-alpha.2 删除了 `sessions.openSubagent(address)` 与 `sessions.open(id)`；插件改为运行时三级能力探测（`uiWorkspace.openSession` → `sessions.openSubagent` → `sessions.open`），不再硬切调用，同一份产物在上下游变更两侧都能工作；三级都不可用时在界面上提示当前版本不支持。
+- **修复：dsh 0.1.6-alpha.2 点击子代理行无法打开会话**：报错 `TypeError: ctx.sessions.openSubagent is not a function`，且该错误被行点击的 `try`/`catch` 吞掉，界面表现为「点了没反应」。0.1.6-alpha.2 删除了 `sessions.openSubagent(address)` 与 `sessions.open(id)`；插件改为运行时三级能力探测（`sessions.openSubagent` → `sessions.open` → `uiWorkspace.openSession`），不再硬切调用，同一份产物在上下游变更两侧都能工作；三级都不可用时在界面上提示当前版本不支持。
+- **修复：三级探测的顺序按参数形态决定**：**0.1.5-alpha.2 … 0.1.6-alpha.1** 这一带同时存在两级 API，但其中的 `uiWorkspace.openSession(sessionId)` 只接受字符串，传入 address 会走 `sessions.open(id)` 并抛 `sessions.select: unknown session [object Object]`；而 `sessions.openSubagent(address)` 在这些宿主上仍然存在且吃对象。若优先试工作区服务，该异常会被吞掉并误报「当前版本不支持」，因此改为 address 先走会话控制器一级、`uiWorkspace` 作为 0.1.6-alpha.2+ 的兜底。已在危险带两侧实机验证：**0.1.5-alpha.1**（客户端包 0.1.5-rc.2）上顺序修正后的产物约 142 ms 完成会话切换、无告警、无导航报错；**0.1.6-alpha.2** 上服务端实际下发的产物仍命中 `uiWorkspace.openSession` 并正常打开子代理会话。
 - **修复：dsh 0.1.6-alpha.2 的 `current` 字段缺失**：会话列表快照不再提供 `current`，而当前会话解析与「对话」标签页兜底依赖它。两处均已优雅退化——兜底逻辑识别 `current` 缺失后立即尝试点击宿主自身的「对话」标签，并在 2 秒内安静放弃，不再空转 8 秒。
 
 ## v1.4.0 发布说明
