@@ -204,7 +204,22 @@ sessions.binding(childId).session
 → session.getSnapshot().chat.legacy
 ```
 
-如果在当前宿主拿不到对应的实时数据，插件只能显示持久化的会话摘要和统计信息。本版本支持 **dsh 0.1.5-rc.2**，并向下兼容所有 DeepSeek Harness 版本（0.1.2 系列能力探测路径为首选分支，**0.1.1-rc.2** legacy 回退路径保持不变）。
+如果在当前宿主拿不到对应的实时数据，插件只能显示持久化的会话摘要和统计信息。
+
+### 打开子代理会话的三级能力探测
+
+```text
+# dsh 0.1.5-rc.2 / 0.1.6-alpha.2 及以后：工作区导航服务
+ctx.get('uiWorkspace').openSession({ parentSessionId, childSessionId, mode } | sessionId)
+
+# dsh 0.1.6-alpha.1 及更早：会话控制器入口
+ctx.sessions.openSubagent(address)   # 精确子代理地址
+ctx.sessions.open(sessionId)         # 保留的会话导航
+
+# 两者都不存在：提示当前 dsh 版本缺少可用的会话导航接口
+```
+
+`uiWorkspace` 通过 `ctx.get('uiWorkspace')` 读取，而不是必填注入，因此未注册该服务的宿主（**0.1.5-rc.2** 之前的全部版本）仍能正常加载并继续走会话控制器路径；而移除了 `openSubagent`/`open` 的 **0.1.6-alpha.2** 则走工作区服务。服务路径下会原样传递 `{ parentSessionId, childSessionId, mode }` 精确地址；会话控制器路径下优先使用地址，仅在缺少 mode/child 时才降级为普通会话导航，因为 `openSubagent` 会拒绝非健康目录子项的地址。0.1.2 系列能力探测路径（实时输出走 `binding.eventSource`、对话标签切换走 slot `actions`）仍为首选分支，**0.1.1-rc.2** legacy 回退路径保持不变。本版本支持 **dsh 0.1.6-alpha.2**，并向下兼容所有 DeepSeek Harness 版本。
 
 归档、分类和最近使用顺序保存在浏览器本地 `localStorage` 中，不会写入 DSH 会话日志。
 
@@ -225,15 +240,22 @@ pnpm run check    # 构建 + tsc --noEmit + node --check lib/index.js + 产物�
 ```bash
 ./test.sh                          # 本地 dsh 跑 web，端口 8084
 ./test.sh 8085                     # 指定端口
-DSH_VERSION=0.1.1-rc.2 ./test.sh   # 用 pnpx 拉取指定 dsh 版本跑 web（默认经 proxychains4 -q 走代理）
+DSH_VERSION=0.1.6-alpha.2 ./test.sh  # 用 pnpx 拉取 0.1.6-alpha.2 跑 web（默认经 proxychains4 -q 走代理）
+DSH_VERSION=0.1.1-rc.2 ./test.sh   # 旧版本兼容性冒烟（legacy 导航路径）
+DSH_PLUGIN_DIR=.worktrees/x ./test.sh  # 冒烟其它 checkout 的产物
 ```
 
-`DSH_HOME` 固定为 `$HOME/tmp/dsh-test`；`DSH_VERSION` 非空时用 `pnpx @deepseek-ai/dsh@<version>` 运行，可用于冒烟测试旧版本（如 0.1.1-rc.2）的兼容性。
+`DSH_HOME` 固定用隔离目录（`$HOME/tmp/dsh-test`，可用 `DSH_SMOKE_HOME=/path` 覆盖），并在启动前拒绝把真实 `~/.dsh` 当冒烟目录。`DSH_VERSION` 非空时用 `pnpx @deepseek-ai/dsh@<version>` 运行，可用于冒烟任意 dsh 版本（如 0.1.6-alpha.2、legacy 的 0.1.1-rc.2）。pnpm 12 默认忽略依赖的生命周期脚本，脚本会为 dsh 的原生依赖逐个传 `--allow-build=<pkg>`（清单可用 `DSH_ALLOW_BUILDS=…` 覆盖）。
 
 ## 致谢与参考
 
 - UI 本地化（zh/en）由 [@Marcuss2](https://github.com/Marcuss2) 在 [PR #1](https://github.com/miuzel/dsh-subagent-ui/pull/1) 中贡献，特此致谢！
 - 子代理永久删除、会话生命周期清理及快照刷新机制的设计参考并致谢开源项目：[@heiheiha798/dsh-plugin-subagent-delete](https://github.com/heiheiha798/dsh-plugin-subagent-delete)。
+
+## v1.5.0 发布说明
+
+- **修复：dsh 0.1.6-alpha.2 点击子代理行无法打开会话**：报错 `TypeError: ctx.sessions.openSubagent is not a function`，且该错误被行点击的 `try`/`catch` 吞掉，界面表现为「点了没反应」。0.1.6-alpha.2 删除了 `sessions.openSubagent(address)` 与 `sessions.open(id)`；插件改为运行时三级能力探测（`uiWorkspace.openSession` → `sessions.openSubagent` → `sessions.open`），不再硬切调用，同一份产物在上下游变更两侧都能工作；三级都不可用时在界面上提示当前版本不支持。
+- **修复：dsh 0.1.6-alpha.2 的 `current` 字段缺失**：会话列表快照不再提供 `current`，而当前会话解析与「对话」标签页兜底依赖它。两处均已优雅退化——兜底逻辑识别 `current` 缺失后立即尝试点击宿主自身的「对话」标签，并在 2 秒内安静放弃，不再空转 8 秒。
 
 ## v1.4.0 发布说明
 

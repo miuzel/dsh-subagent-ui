@@ -53,7 +53,25 @@ A full persistent workspace-wide archive view requires a host-side catalog RPC (
 
 ## Compatibility
 
-v1.4.0 supports dsh **0.1.5-rc.2** and stays backward compatible with all DeepSeek Harness versions: the 0.1.2-series capability-detection paths (live output via `binding.eventSource`, chat-tab switch via slot `actions`) remain the primary branches, and the **0.1.1-rc.2** legacy fallbacks (`chat.legacy` snapshot) are unchanged.
+v1.5.0 supports dsh **0.1.6-alpha.2** and stays backward compatible with all DeepSeek Harness versions. Opening a subagent session is capability-detected at runtime and degrades in three tiers:
+
+```text
+# dsh 0.1.5-rc.2 / 0.1.6-alpha.2 and later: the workspace navigation service
+ctx.get('uiWorkspace').openSession({ parentSessionId, childSessionId, mode } | sessionId)
+
+# dsh 0.1.6-alpha.1 and earlier: the session controller entry points
+ctx.sessions.openSubagent(address)   # exact child address
+ctx.sessions.open(sessionId)         # retained session navigation
+
+# neither is available: the click reports that the host has no session navigation API
+```
+
+`uiWorkspace` is read through `ctx.get('uiWorkspace')`, never through a required injection, so hosts that do not register the service (everything before **0.1.5-rc.2**) still load and keep using the session-controller path, while hosts that removed `openSubagent`/`open` (**0.1.6-alpha.2**) use the workspace service. Within the service path the exact `{ parentSessionId, childSessionId, mode }` address is passed straight through; on the session-controller path the address is used first and only a missing mode/child falls back to plain session navigation, because `openSubagent` rejects addresses that are not healthy catalog children. The 0.1.2-series capability paths (live output via `binding.eventSource`, chat-tab switch via slot `actions`) remain the primary branches, and the **0.1.1-rc.2** legacy fallbacks (`chat.legacy` snapshot) are unchanged.
+
+## v1.5.0
+
+- **Fix**: on DeepSeek Harness **0.1.6-alpha.2** clicking a subagent row failed with `TypeError: ctx.sessions.openSubagent is not a function` (the click was silently swallowed by the row's `try`/`catch`, so the panel just looked dead). 0.1.6-alpha.2 removed `sessions.openSubagent(address)` and `sessions.open(id)`; the plugin now detects the navigation capability at runtime in three tiers (`uiWorkspace.openSession` → `sessions.openSubagent` → `sessions.open`) instead of hard-switching, so the same bundle keeps working on both sides of that upstream change, and the failure is surfaced in the UI when no navigation API exists at all.
+- **Fix**: 0.1.6-alpha.2 also dropped the `current` field from the session list snapshot, which the current-session resolution and the Chat-tab fallback relied on. Both now degrade gracefully: the fallback recognizes a missing `current`, tries the host's own Chat tab immediately, and gives up quietly after 2 s instead of polling for 8 s.
 
 ## v1.4.0
 
@@ -94,8 +112,13 @@ Smoke-test a specific dsh version:
 
 ```bash
 ./test.sh                                      # local dsh, port 8084
-DSH_VERSION=0.1.1-rc.2 ./test.sh               # pnpx @deepseek-ai/dsh@0.1.1-rc.2 (via proxychains4 -q)
+./test.sh 8085                                 # explicit port
+DSH_VERSION=0.1.6-alpha.2 ./test.sh            # pnpx @deepseek-ai/dsh@0.1.6-alpha.2 (via proxychains4 -q)
+DSH_VERSION=0.1.1-rc.2 ./test.sh               # legacy-API smoke on an old dsh
+DSH_PLUGIN_DIR=.worktrees/x ./test.sh          # smoke another checkout's bundle
 ```
+
+The script always uses an isolated `DSH_HOME` (`$HOME/tmp/dsh-test`, override with `DSH_SMOKE_HOME=…`) and refuses to touch the real `~/.dsh` profile. With `DSH_VERSION` set it runs `pnpx @deepseek-ai/dsh@<version>`; pnpm 12 ignores dependency lifecycle scripts by default, so the script passes `--allow-build=<pkg>` for dsh's native dependencies (`DSH_ALLOW_BUILDS=…` overrides the list).
 
 ## Acknowledgements
 

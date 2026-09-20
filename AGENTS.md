@@ -67,10 +67,13 @@ After each feature/fix set is tested and you are asked to release, follow this o
 ### Smoke run
 
 ```bash
-./test.sh [PORT]
+./test.sh [PORT]                        # local dsh, port ${PORT:-8084}
+DSH_VERSION=0.1.6-alpha.2 ./test.sh     # pnpx @deepseek-ai/dsh@<version> (via proxychains4 -q)
+DSH_SMOKE_HOME=/path ./test.sh          # override the isolated smoke HOME
+DSH_PLUGIN_DIR=.worktrees/x ./test.sh   # smoke another checkout's bundle (default: repo root via file:.)
 ```
 
-The script sets `DSH_HOME="$HOME/tmp/dsh-test"`, removes and re-adds this local plugin to the Web profile, then starts `dsh web --port ${PORT:-8084}` (defaults to port 8084 if omitted). It is an environment-dependent smoke setup, not a unit-test runner.
+The script uses an isolated `DSH_HOME` (default `$HOME/tmp/dsh-test`, override with `DSH_SMOKE_HOME`) and aborts if that would be the real `~/.dsh`, removes and re-adds the local plugin to the Web profile, then starts `dsh web --no-open --port ${PORT:-8084}`. With `DSH_VERSION` set it runs through `pnpx @deepseek-ai/dsh@<version>` and passes one `--allow-build=<pkg>` per native dsh dependency (pnpm 12 ignores lifecycle scripts by default; `DSH_ALLOW_BUILDS=…` overrides the comma-separated list, `DSH_PROXY=""` bypasses proxychains). A `DSH_VERSION` run needs network access to the npm registry. It is an environment-dependent smoke setup, not a unit-test runner.
 
 ### Build / test / lint
 
