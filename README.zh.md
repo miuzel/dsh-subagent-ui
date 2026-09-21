@@ -212,9 +212,12 @@ sessions.binding(childId).session
 子代理的「类型」与「模型 provider/id」来自宿主的公开投影，不新增任何 RPC、也不写入任何状态：
 
 ```text
-# 类型：当前浏览器运行时的子代理目录条目
+# 类型：同一个取值函数、两级只读来源，按此顺序回退
 ctx.sessions.list.getSnapshot().subagentsByParent[parentId].entries
-→ entry.mode                       # one-shot | continuable
+→ entry.mode                       # 第 1 级：已发现的目录条目（该父会话的目录被拉取后才存在）
+ctx.sessions.list.getSnapshot().byId[childId].projectionValues.subagent
+→ { mode, label, seq } | null      # 第 2 级：子会话自身的身份投影（随实时控制流下发）
+→ 显示值 = 第 1 级 ?? 第 2 级      # 两级都拿不到 = 沿用既有 `typeLoading` 兜底文案
 
 # 模型：会话投影 modelSelection（按 key 能力探测，读不到即视为宿主不提供）
 ctx.sessions.list.getSnapshot().byId[childId].projectionValues.modelSelection
@@ -232,6 +235,7 @@ ctx.sessions.list.getSnapshot().byId[childId].projectionValues.modelSelection
 
 - `reasoningEffort` **仅在宿主提供时**追加（` · high`），宿主不提供就不显示占位符。
 - 三处共用同一个 `modelText()` 取值函数，来源、优先级（`next ?? lastUsed`）与兜底逻辑完全相同，浮窗只省略字段标签。
+- 类型由同一个取值函数 `childModeOf` 按同一回退顺序解析，详情行、条目徽章与浮窗共用：先取已发现的目录条目，再回退到子会话自身的 `subagent` 身份投影。第 2 级正是「刷新页面后**不打开**管理面板也能拿到正确类型」的原因——宿主在实时控制流与每次 session-added 摘要里都会下发该投影；而第 1 级只在某个父会话的目录被拉取（打开面板即其中一种）之后才出现。两级都拿不到时沿用既有兜底：面板与浮窗显示 **类型待加载**（英文界面 `type loading…`），不空白、不出现 `null`。
 - 宿主未提供该投影（例如 **0.1.1-rc.2**）、投影值为空或 provider/model 为空串时，统一显示兜底文案 **模型未知**（英文界面 `model unknown`），不会出现空白或 `null/null`。该兜底使用独立 i18n 键 `modelUnknown`，不复用 `typeLoading`：老版本宿主上类型与模型各自独立降级（实测同行为 `类型：类型加载中… · 模型未知`）。
 - **只读、无切换入口**：插件不调用 `selectedModel` 等任何模型写入 API，也不提供模型切换 UI；官方 SDK 对子代理地址的模型选择明确不可用（`model selection is unavailable for addressed subagent sessions`）。
 

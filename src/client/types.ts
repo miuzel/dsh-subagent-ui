@@ -35,6 +35,26 @@ export interface ModelSelectionProjection {
   next: ModelSelection | null
 }
 
+/** Durable child identity as carried by the `subagent` projection's client view. */
+export interface SubagentIdentity {
+  mode: SubagentMode
+  label?: string
+  seq?: number
+}
+
+/**
+ * Client view of the host `subagent` identity projection. The wire view is the
+ * flat identity, or the serializable `null` sentinel when no valid descriptor
+ * exists (the sentinel survives JSON, an absent field would not); a host fold
+ * state nests the same identity under `identity`. Both shapes are read, and an
+ * absent key means the host mounts no such projection (capability absence).
+ */
+export interface SubagentIdentityProjection {
+  mode?: SubagentMode
+  label?: string
+  identity?: SubagentIdentity
+}
+
 export interface ProjectionValues {
   tokenUsage?: TokenUsage
   sessionStats?: SessionStats
@@ -42,6 +62,7 @@ export interface ProjectionValues {
   steps?: number
   prompt?: string
   modelSelection?: ModelSelectionProjection
+  subagent?: SubagentIdentityProjection | null
 }
 
 /** Public DSH session summary as exposed by the Web session store. */

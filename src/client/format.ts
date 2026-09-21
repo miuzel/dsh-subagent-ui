@@ -2,6 +2,22 @@ import type { Tr, SessionSummary, ParentSubagents, ModeInfo, SubagentRow, CwdLik
 export const age=(tr:Tr,stamp:number)=>{const seconds=Math.max(0,Math.floor((Date.now()-(stamp||Date.now()))/1000));if(seconds<60)return tr('age.sAgo',{s:seconds});const minutes=Math.floor(seconds/60);if(minutes<60)return tr('age.mAgo',{m:minutes});const hours=Math.floor(minutes/60);if(hours<24)return tr('age.hmAgo',{h:hours,m:minutes%60});return tr('age.dAgo',{d:Math.floor(hours/24)})}
 export const title:(s:SessionSummary)=>string=s=>s.title||s.displayTitle||s.id, short=(tr:Tr,v:string)=>v?v.replace(/^session-/,'').slice(0,8):tr('unknown'), workspace=(tr:Tr,s:CwdLike|undefined)=>s?.cwd?s.cwd.split(/[\\/]/).filter(Boolean).pop():tr('unknownWorkspace'), modeLabel=(tr:Tr,m:string|undefined)=>m==='one-shot'?tr('oneShot'):m==='continuable'?tr('continuable'):tr('typeLoading'), tokenTotal:(s:SessionSummary|undefined)=>number|undefined=s=>{const u=s?.projectionValues?.tokenUsage;return u?u.uncachedInputTokens+u.outputTokens+u.cacheReadTokens+u.cacheWriteTokens:undefined},fmt=(tr:Tr,n:number|null|undefined)=>n==null?tr('unknown'):n>=1e6?`${(n/1e6).toFixed(1)}m`:n>=1e3?`${(n/1e3).toFixed(1)}k`:String(n), promptPreview:(s:SessionSummary|undefined)=>string=s=>String(s?.prompt||s?.projectionValues?.prompt||'').slice(0,100),statsLine=(tr:Tr,row:SubagentRow|undefined)=>{const u=row?.projectionValues?.tokenUsage,t=tokenTotal(row);return tr('statsLine',{input:fmt(tr,u?.uncachedInputTokens),output:fmt(tr,u?.outputTokens),cacheHit:u?.cacheReadTokens!=null&&t?Math.round(u.cacheReadTokens/t*100):tr('unknown'),turns:row?.projectionValues?.sessionStats?.turns??row?.projectionValues?.turns??tr('unknown'),steps:row?.projectionValues?.sessionStats?.steps??row?.projectionValues?.steps??tr('unknown')})}
 export const category=(tr:Tr,name:string)=>{const clean=name.trim();const part=clean.split(/[:：|—–-]/)[0].trim();return part.length>1&&part.length<28?part:clean.split(/\\s+/).slice(0,2).join(' ')||tr('uncategorized')},rootSession=(byId:Record<string, SessionSummary>,id:string)=>{let current=id,seen=new Set();while(current&&byId[current]?.origin==='subagent'&&byId[current].parentId&&!seen.has(current)){seen.add(current);current=byId[current].parentId}return current}
+// One reader, one fallback order, for the child's type — shared by the panel
+// detail row, the row badge and the active float so the three surfaces cannot
+// disagree. Rung 1 is the discovered parent-catalog entry
+// (`subagentsByParent[parentId].entries[].mode`), which the manager only holds
+// once that parent's catalog has been pulled; that pull is why opening the
+// panel used to "fix" the type. Rung 2 is the child's own `subagent` identity
+// projection: the host pushes it on the live-control stream and on every
+// session-added summary, so a fresh child carries it before any catalog pull.
+// The projection is read by shape, never by version: the client view is the flat
+// identity (`{ mode, label, seq }`, or the `null` sentinel when no valid
+// descriptor exists), while a host fold state nests the same identity under
+// `identity`. Both rungs silent resolves to nothing at all, so the shared
+// `modeLabel` keeps rendering the existing `typeLoading` text; the reader never
+// fabricates a mode, and a missing projection stays capability absence.
+export const projectionMode=(s:SessionSummary|undefined)=>{const raw=s?.projectionValues?.subagent,identity=raw?.identity,mode=identity?identity.mode:raw?.mode;return mode==='one-shot'||mode==='continuable'?mode:undefined}
+export const childModeOf=(s:SessionSummary|undefined,catalog:ModeInfo|undefined)=>catalog?.mode??projectionMode(s)
 export const modeMap:(c:Record<string, ParentSubagents>|undefined)=>Record<string, ModeInfo>=c=>Object.values(c||{}).flatMap(x=>x.entries||[]).reduce((o,e)=>{if(e.kind==='child')o[e.id]={mode:e.mode,label:e.label};return o},{}), highlight=(text:unknown,term:string)=>{if(!term)return text;const parts=String(text).split(new RegExp(`(${term.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')})`,'ig'));return parts.map((part,i)=>i%2?jsx('mark',{children:part},i):part)}
 // Model selection is a read-only capability probe: the host projection key is
 // absent on older hosts, and both of its fields are null until the session

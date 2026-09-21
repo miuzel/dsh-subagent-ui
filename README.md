@@ -58,9 +58,12 @@ A full persistent workspace-wide archive view requires a host-side catalog RPC (
 A child's type and model come from public host projections. The plugin adds no RPC and writes no state:
 
 ```text
-# type: the subagent catalog entry of the current browser runtime
+# type: one reader, two read-only rungs, resolved in this order
 ctx.sessions.list.getSnapshot().subagentsByParent[parentId].entries
-→ entry.mode                       # one-shot | continuable
+→ entry.mode                       # rung 1: discovered catalog entry (present once that parent's catalog was pulled)
+ctx.sessions.list.getSnapshot().byId[childId].projectionValues.subagent
+→ { mode, label, seq } | null      # rung 2: the child's own identity projection (pushed on the live-control stream)
+→ displayed value = rung 1 ?? rung 2   # both silent = the existing `typeLoading` text
 
 # model: the session projection modelSelection (probed by key; unreadable = the host does not publish it)
 ctx.sessions.list.getSnapshot().byId[childId].projectionValues.modelSelection
@@ -78,6 +81,7 @@ The display rules are identical on all three surfaces and differ only in density
 
 - `reasoningEffort` is appended **only when the host supplies it** (` · high`); no placeholder is rendered otherwise.
 - All three surfaces share one `modelText()` reader, so the source, the precedence (`next ?? lastUsed`), and the fallback are the same everywhere; the float only drops the field labels.
+- The type is resolved by one reader (`childModeOf`) with one fallback order, shared by the detail row, the row badge and the float: the discovered catalog entry first, then the child's own `subagent` identity projection. Rung 2 is what makes the type correct on a freshly loaded page **without** opening the manager panel — the host pushes that projection on the live-control stream and on every session-added summary, while rung 1 only arrives when a parent's catalog is pulled (opening the panel is one such pull). Both rungs silent keeps the existing fallback: the panel and the float show **type loading…** (`类型待加载` in Chinese), never a blank or a `null`.
 - When the host does not publish the projection (e.g. **0.1.1-rc.2**), when the projection value is empty, or when provider/model is an empty string, the plugin shows the explicit fallback **model unknown** (`模型未知` in Chinese) instead of a blank or `null/null`. That fallback has its own i18n key (`modelUnknown`) and never reuses `typeLoading`: on an old host the two fields degrade independently (observed row: `Type: type loading… · Model: model unknown`).
 - **Read-only, no switching**: the plugin calls no model write API such as `selectedModel` and offers no model-switch UI; the official SDK marks model selection as unavailable for addressed subagent sessions (`model selection is unavailable for addressed subagent sessions`).
 
