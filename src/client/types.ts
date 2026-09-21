@@ -270,6 +270,8 @@ export interface SessionsRuntime {
   open?: (sessionId: string) => void
   openSubagent?: (address: unknown) => void
   setSubagentCatalogOpen?: (parentId: string, open: boolean) => void
+  /* dsh 0.1.6-alpha.2: resolve an already discovered direct-parent address. */
+  subagentAddress?: (childId: string) => SubagentAddress | undefined
 }
 
 /**
@@ -281,9 +283,42 @@ export interface UiWorkspaceRuntime {
   openSession?: (target: unknown) => void
 }
 
+/**
+ * The cross-plugin right-Sidebar navigation face (`ctx.sidebarRight`,
+ * `ISidebarRight`). The service exists from dsh 0.1.6-alpha.2 on; older hosts
+ * expose no such service, so every member is optional and probed by the caller.
+ */
+export interface SidebarRightRuntime {
+  /* An address outside dsh-resource:// or one no tab type claims throws (wiring error). */
+  openResource?: (address: string, options?: SidebarRightPlacement) => void
+  isExpanded?: () => boolean
+}
+
+/** The placement share of `openResource` this plugin uses (`SidebarRightPlacement`). */
+export interface SidebarRightPlacement {
+  preferNewPane?: boolean
+}
+
+/**
+ * The right-Sidebar tab-type registry (`ctx.sidebarRightTabs`). Only
+ * `candidates` is used: a synchronous, side-effect-free probe for whether any
+ * registered type would claim an address.
+ */
+export interface SidebarRightTabsRuntime {
+  candidates?: (address: string) => readonly unknown[]
+}
+
 /* ------------------------------------------------------------------ */
 /* Component props.                                                    */
 /* ------------------------------------------------------------------ */
+
+/** Props of the shadow this plugin registers over the stock lineage dropdown. */
+export interface LineageShadowProps {
+  lineageSessionId?: string
+  displayTitle?: string
+  openTitle?: () => void
+  useSessions?: <T>(selector: (state: SessionState) => T) => T
+}
 
 export interface LiveOutputProps {
   t: Tr
@@ -307,6 +342,9 @@ export interface ActiveFloatProps {
   liveEnabled: boolean
   onLiveChange: (value: boolean) => void
   liveCap: number
+  /* Right-sidebar capability: both are absent when the host exposes no such face. */
+  asideAddressOf?: ((row: SubagentRow) => string | null) | null
+  openAside?: ((address: string) => boolean) | null
 }
 
 export interface ManagerProps {
@@ -318,6 +356,9 @@ export interface ManagerProps {
   setCatalogOpen: (parentId: string, open: boolean) => void
   sessionId?: string
   actions?: { setView?: (viewId: string) => void }
+  /* Right-sidebar capability: both are absent when the host exposes no such face. */
+  asideAddressOf?: ((row: SubagentRow) => string | null) | null
+  openAside?: ((address: string) => boolean) | null
 }
 
 /** The plugin context handed to apply() by the DSH client runtime. */
@@ -331,4 +372,7 @@ export interface PluginCtx {
   }
   /* Optional-service probe (dsh client root contexts expose ctx.get). */
   get?: (name: string) => unknown
+  /* Optional right-Sidebar faces; never declared as hard injections. */
+  sidebarRight?: SidebarRightRuntime
+  sidebarRightTabs?: SidebarRightTabsRuntime
 }

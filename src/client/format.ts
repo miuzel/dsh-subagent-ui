@@ -15,3 +15,18 @@ export const modelCompact=(tr:Tr,row:SubagentRow|undefined)=>modelText(row)||tr(
 // surrounding labels differ (full in the panel details, bare in the float).
 export const modeModelLine=(tr:Tr,row:SubagentRow|undefined)=>`${tr('mode.label',{mode:modeLabel(tr,row?.mode)})} · ${modelLabel(tr,row)}`
 export const modeModelCompact=(tr:Tr,row:SubagentRow|undefined)=>`${modeLabel(tr,row?.mode)} · ${modelCompact(tr,row)}`
+// The right-sidebar action shared by both presentation surfaces (the manager
+// panel row and the active float). `addressOf` is the capability probe: when the
+// host exposes no right-sidebar face it is null and no button is rendered at
+// all; when it exists but this row has no usable address, the button renders
+// disabled with a readable reason instead of disappearing. The click always
+// stops propagation so the row's own "open in the main conversation" default
+// never runs, and a wiring failure never surfaces as an exception.
+export const asideButton=(options:{tr:Tr,row:SubagentRow,addressOf?:((row:SubagentRow)=>string|null)|null,open?:((address:string)=>boolean)|null,compact?:boolean,onOpened?:()=>void})=>{
+  const addressOf=options.addressOf
+  if(typeof addressOf!=='function')return null
+  const tr=options.tr
+  let address=null
+  try{address=addressOf(options.row)}catch(error){console.warn('subagent-workspace-ui: sidebar address lookup failed',error);address=null}
+  return jsx('button',{type:'button',className:options.compact?'dsh-sam-side-btn dsh-sam-side-btn-compact':'dsh-sam-side-btn',disabled:!address,title:address?tr('openInSidebar'):tr('openInSidebarUnavailable'),'aria-label':address?tr('openInSidebar.named',{name:options.row.name}):tr('openInSidebarUnavailable'),onClick:event=>{event.stopPropagation();if(!address)return;if(typeof options.open==='function'&&options.open(address)===true){if(typeof options.onOpened==='function')options.onOpened();return}window.alert(tr('openInSidebarFailed'))},children:'◫'})
+}

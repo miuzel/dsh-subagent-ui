@@ -160,6 +160,7 @@
 5. **筛选行**：一次性、长期未活跃、已归档和重置筛选。
 6. **结果统计**：显示当前结果数量和批量操作入口。
 7. **结果列表**：活跃分组、会话/工作区分组、子代理卡片和实时状态。
+8. **行内 `◫` 按钮**：在右侧边栏打开该子代理，主对话不跳转（见「在右侧边栏打开子代理」一节）。
 
 插件不在左侧全局菜单增加入口按钮；入口仅位于会话标题栏。
 
@@ -178,13 +179,13 @@ dsh plugin --profile web remove dsh-subagent-workspace-ui
 dsh plugin --profile web add file:.
 ```
 
-插件 bundle 会自动加载 [`cordis.patch.yml`](cordis.patch.yml)：安装期间插入管理器，并禁用 DSH 自带的 `ui-subagent` 子代理导航。卸载插件后，该 bundle 层会移除，底层的 `ui-subagent` 设置自动恢复。请重启现有的 `dsh web` 进程，然后刷新：
+插件 bundle 会自动加载 [`cordis.patch.yml`](cordis.patch.yml)：安装期间插入管理器，并且**只遮蔽一个 slot**——用 `priority: -1` 的空占位占用 `conversation.session.header.lineage`，从而让 DSH 自带的 `ui-subagent` 血统下拉保持不可见。自带 `ui-subagent` 插件本身**保持启用**（本插件不再整体禁用它），因为新版「在侧边栏打开」按钮正是复用它提供的 `subagentchat` 右侧栏标签页。该占位渲染的是会话标题而不是空内容，所以子代理会话标题不会消失。卸载插件后，这层 bundle patch 会被移除，宿主的 `ui-subagent` 设置从未被改动，恢复如初。请重启现有的 `dsh web` 进程，然后刷新：
 
 ```text
 http://127.0.0.1:3080
 ```
 
-如果之前在 `$DSH_HOME/profiles/web/cordis.patch.yml` 中手动禁用了 `ui-subagent`，测试自动恢复前请移除那条手动配置；插件不会覆盖用户自己的设置。
+如果之前在 `$DSH_HOME/profiles/web/cordis.patch.yml` 中手动禁用了 `ui-subagent`，那条配置属于用户所有，插件不会覆盖、也不会依赖它——可以保留。
 
 ## 数据边界与兼容性
 
@@ -250,6 +251,30 @@ ctx.get('uiWorkspace').openSession({ parentSessionId, childSessionId, mode } | s
 `uiWorkspace` 通过 `ctx.get('uiWorkspace')` 读取，而不是必填注入，因此未注册该服务的宿主（**0.1.2-alpha.5** 之前的全部版本）仍能正常加载并继续走会话控制器路径；而移除了 `openSubagent`/`open` 的 **0.1.6-alpha.2** 则走工作区服务。**探测顺序按「参数形态」而不是版本号决定**：`sessions.openSubagent` 在所有带它的宿主上都吃 address 对象，而 `uiWorkspace.openSession` 直到 **0.1.6-alpha.2** 才接受 `SessionTarget`——在 **0.1.5-alpha.2 … 0.1.6-alpha.1** 上它是 `openSession(sessionId)`，内部走 `sessions.open(id)`，传入对象会抛错。因此先试会话控制器一级、把工作区服务作为兜底。控制器路径下优先使用 `{ parentSessionId, childSessionId, mode }` 精确地址，仅在缺少 mode/child 时才降级为普通会话导航，因为 `openSubagent` 会拒绝非健康目录子项的地址。0.1.2 系列能力探测路径（实时输出走 `binding.eventSource`、对话标签切换走 slot `actions`）仍为首选分支，**0.1.1-rc.2** legacy 回退路径保持不变。本版本支持 **dsh 0.1.6-alpha.2**，并向下兼容所有 DeepSeek Harness 版本。
 
 归档、分类和最近使用顺序保存在浏览器本地 `localStorage` 中，不会写入 DSH 会话日志。
+
+### 在右侧边栏打开子代理（`◫` 按钮）
+
+管理面板的每个子代理条目、以及活跃子代理浮窗的每一行，都带一个 `◫` 图标按钮：点击后**不离开当前主对话**，直接把这个子代理作为 DSH 右侧栏的 `subagentchat` 标签页打开，标签标题就是子代理的名称/label。两处行为完全一致（浮窗只是紧凑样式），并遵循同一套降级规则：
+
+```text
+# 能力探测（不判版本号）：三者缺一就不渲染按钮
+ctx.get('sidebarRight')      → 有 openResource 函数
+ctx.get('sidebarRightTabs')  → 有 candidates 函数
+ctx.sessions.subagentAddress → 是函数（按行取地址）
+
+# 单行地址：subagentAddress(row.id) 重建为
+# dsh-resource://subagentchat/session/<child>?parent=…&mode=…
+# 再用 sidebarRightTabs.candidates(address)（官方认定的「谁能打开」检查）验证。
+# 验证为空 → 该行按钮渲染为禁用态并给出可读说明，绝不抛异常给用户。
+```
+
+要点：
+
+- **默认点击不变**：点条目本身仍然把子代理打开到主对话区（与 v1.5.0 一致）；新按钮 `stopPropagation`，既不触发默认跳转，也不会误触批量选择。
+- **地址可用性**：一次性与可继续子代理都能打开。`ctx.sessions.subagentAddress()` 只能解析**当前客户端运行时已经发现**的子代理，因此刚派发、尚未被目录刷新的子代理，其按钮会短暂处于「没有可用的子代理地址」的禁用态（打开一次管理面板即会刷新目录并恢复可用）；跨工作区、基准测试等拿不到地址的条目同样只禁用、不报错。
+- **落点**：右栏会自动展开，主对话保持在原会话，可以一边看子代理一边继续主对话。
+- 右侧栏里的子代理会话使用 DSH 官方的只读输入区（`一次性子代理记录` / “one-shot subagent record”），这是复用官方标签页带来的既有行为，属预期。
+- 图标按钮带 tooltip：可用时为「在侧边栏打开 <名称>」，不可用时为「该条目没有可用的子代理地址，无法在侧边栏打开」；中英文案均已接入 i18n。
 
 ## 开发与验证
 

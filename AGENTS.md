@@ -100,7 +100,7 @@ There is no project-defined `test` or `lint` script and no test or lint configur
 - `scripts/verify-build.mjs` — migration proof / delta viewer: compares the generated bundle with the pre-refactor golden (default ref `v1.3.4`) up to insignificant whitespace (token-level and line-level comparison) and prints any intentional differences.
 - `scripts/verify-fresh.mjs` — bundle freshness gate used by `pnpm run check` (fails on a stale committed bundle).
 - `docs/images/` — README screenshots (`screenshot-1.png` and `screenshot-2.png`).
-- `cordis.patch.yml` — bundle patch that inserts this plugin and disables DSH’s stock `ui-subagent` lineage dropdown while installed.
+- `cordis.patch.yml` — bundle patch that inserts this plugin and shadows exactly one stock slot (`conversation.session.header.lineage` at `priority: -1`) so DSH’s stock `ui-subagent` lineage dropdown stays invisible while installed. The stock `ui-subagent` plugin is intentionally left enabled: the row/floating-panel “open in the sidebar” button reuses its `subagentchat` right-sidebar tab.
 - `test.sh` — local DSH Web smoke setup described above.
 - `package.json` — package metadata, exports, DSH client injection declarations, peer dependency, and scripts.
 - `README.md` / `README.zh.md` — feature, installation, runtime-boundary, and validation documentation.
@@ -110,7 +110,8 @@ There is no project-defined `test` or `lint` script and no test or lint configur
 - The plugin manages the catalog discovered by the current browser runtime; it is not a global historical subagent index.
 - Exact child navigation uses `{ parentSessionId, childSessionId, mode }` when DSH supplies that address. Otherwise the UI falls back to retained session navigation.
 - Archive state is browser-local and does not delete DSH sessions.
-- Removing the package removes its bundle patch and restores the underlying `ui-subagent` setting. A manually configured user stanza in `$DSH_HOME/profiles/web/cordis.patch.yml` is intentionally preserved.
+- Removing the package removes its bundle patch; the host's `ui-subagent` setting was never modified (the patch only shadows the lineage slot), and a manually configured user stanza in `$DSH_HOME/profiles/web/cordis.patch.yml` is intentionally preserved. Verified: the user patch file is byte-identical before and after `dsh plugin --profile web remove`.
+- The “open in the sidebar” button must stay **capability-detected, never version-checked**: it requires `ctx.get('sidebarRight').openResource`, `ctx.get('sidebarRightTabs').candidates` and `ctx.sessions.subagentAddress`, and each row's rebuilt `dsh-resource://subagentchat/session/…` address is validated with `candidates(address)` before it is used, so a format drift disables that one row's button instead of throwing at the user. Those services are deliberately **not** added to the plugin's cordis `inject` list.
 - Live output/tool/context details require the documented bound-session conversation snapshot; without it, the UI falls back to the durable summary.
 - The package is installed from the local directory with `file:.`; profile installs are store copies, so after changing `src/client/` you must `pnpm run build` and re-add the plugin (or run `./test.sh`) for the Web UI to pick up changes. The build requires the dev dependencies (`sucrase`, `typescript`) — run `pnpm install` after a fresh clone; `scripts/build.mjs` needs Node >= 18 (uses `import.meta.url`; sucrase does the rest).
 - `.dsh-plugin-smoke/` and `.dsh-graph/` are ignored local/runtime data; do not treat them as application source.

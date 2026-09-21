@@ -16,6 +16,7 @@ A Web client plugin that adds a **子代理管理** button to the conversation-h
 - Load catalogs in pages of 40 with an independent wheel-scroll container; batch time selection expands loading up to 1,000 children.
 - Batch mode changes cards into selection targets and hides individual archive/restore actions. The highlighted 完成 button exits batch mode.
 - Open a loaded child at its exact `{ parentSessionId, childSessionId, mode }` address. In normal mode the whole card opens the child; archive controls do not.
+- Every row also carries a dedicated **open in the sidebar** button (`◫`) that opens the child as a right-sidebar tab, so the main conversation stays where it is. The button stops propagation (it never triggers the row's default navigation and never toggles batch selection), and it is rendered only when the runtime exposes the sidebar capability: without `ctx.sidebarRight` plus a type that claims the address, the button is hidden entirely; for a single row whose subagent address cannot be resolved it stays visible but disabled with a readable reason. The same button is on the active-subagent floating panel.
 - Show session IDs beside names, compact metadata, token totals, and creation time in the relative-time tooltip.
 - Active children are grouped at the top in a collapsible section. When the runtime exposes conversation snapshots, the panel shows the latest two lines of live output, recent tool calls, context injection, command status, and a gray final snapshot after completion.
 
@@ -42,9 +43,9 @@ From this directory:
 dsh plugin --profile web add file:.
 ```
 
-The bundle includes [`cordis.patch.yml`](cordis.patch.yml), which inserts the manager and disables DSH’s stock `ui-subagent` lineage dropdown while the package is installed. Removing the package removes this bundle layer and restores the underlying `ui-subagent` setting. Restart the existing `dsh web` process, then refresh `http://127.0.0.1:3080` after the plugin is available.
+The bundle includes [`cordis.patch.yml`](cordis.patch.yml), which inserts the manager and shadows exactly one stock slot: `conversation.session.header.lineage` is claimed by a `priority: -1` placeholder so DSH's stock `ui-subagent` lineage dropdown stays invisible while this package is installed. The stock `ui-subagent` plugin itself is **left enabled** — this package no longer disables it wholesale, because the sidebar tab it provides is the navigation target of the new "open in the sidebar" button. The placeholder renders the session title instead of an empty entry, so the subagent session header keeps its title. Removing the package removes this bundle layer, and the host's `ui-subagent` setting is untouched, so your own configuration is restored as it was. Restart the existing `dsh web` process, then refresh `http://127.0.0.1:3080` after the plugin is available.
 
-If you previously disabled `ui-subagent` manually in `$DSH_HOME/profiles/web/cordis.patch.yml`, remove that manual stanza when testing automatic restoration; user-owned settings are intentionally preserved.
+If you previously disabled `ui-subagent` manually in `$DSH_HOME/profiles/web/cordis.patch.yml`, you can keep that stanza: it is user-owned and intentionally preserved. The plugin no longer needs (or writes) such a stanza.
 
 ## Runtime data boundary
 
@@ -96,6 +97,26 @@ ctx.get('uiWorkspace').openSession({ parentSessionId, childSessionId, mode } | s
 ```
 
 `uiWorkspace` is read through `ctx.get('uiWorkspace')`, never through a required injection, so hosts that do not register the service (everything before **0.1.2-alpha.5**) still load and keep using the session-controller path, while hosts that removed `openSubagent`/`open` (**0.1.6-alpha.2**) use the workspace service. **The probe order follows the argument shape, not the version**: `sessions.openSubagent` accepts an address object on every host that has it, whereas `uiWorkspace.openSession` only accepts a `SessionTarget` from **0.1.6-alpha.2** on — on **0.1.5-alpha.2 … 0.1.6-alpha.1** it is `openSession(sessionId)` and routes through `sessions.open(id)`, which throws on an address. The session-controller tier is therefore tried first and the workspace service is the fallback. Within the controller tier the exact `{ parentSessionId, childSessionId, mode }` address is used first and only a missing mode/child falls back to plain session navigation, because `openSubagent` rejects addresses that are not healthy catalog children. The 0.1.2-series capability paths (live output via `binding.eventSource`, chat-tab switch via slot `actions`) remain the primary branches, and the **0.1.1-rc.2** legacy fallbacks (`chat.legacy` snapshot) are unchanged.
+
+The **open in the sidebar** button follows the same rule — capability detection, never a version check:
+
+```text
+# button hidden entirely unless every piece is present
+ctx.get('sidebarRight')        → typeof openResource === 'function'
+ctx.get('sidebarRightTabs')    → typeof candidates === 'function'
+ctx.sessions.subagentAddress   → typeof function   (per-row address lookup)
+
+# per row: address = subagentAddress(row.id) rebuilt into the canonical
+# dsh-resource://subagentchat/session/<child>?parent=…&mode=… form and then
+# validated with sidebarRightTabs.candidates(address) — the registry's own
+# "would any type open this?" check. Empty ⇒ the row's button renders disabled
+# with a readable reason instead of throwing.
+```
+
+Adding the sidebar capability does not change the navigation probe above: the row's default click still walks the same three tiers, and the new button never touches them.
+
+Opening a subagent in the right sidebar uses DSH's own `subagentchat` right-sidebar tab, so the pane is a *session view*: the subagent session's composer there is DSH's official read-only composer (`一次性子代理记录` / "one-shot subagent record") rather than this plugin's UI. That is expected, and it is the only official way to read a child session without leaving the main conversation.
+
 
 ## v1.5.0
 

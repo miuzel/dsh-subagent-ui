@@ -3,7 +3,12 @@
     - id: subagent-workspace-manager
       name: 'dsh-subagent-workspace-ui'
 
-# Disable the stock lineage dropdown while this manager is installed.
-# Removing this bundle restores the user's underlying ui-subagent setting.
-- id: ui-subagent
-  disabled: true
+# The stock ui-subagent plugin is deliberately left ENABLED: the manager reuses
+# its right-sidebar chat tab for the new "open in the sidebar" button. Its
+# session-header lineage dropdown is hidden instead by this plugin's own client
+# bundle, which registers a title-only cell at priority -1 in
+# conversation.session.header.lineage (a `single` slot renders its lowest
+# priority winner, so -1 shadows the stock registration without throwing).
+# Removing this package removes that registration with it, and this file no
+# longer touches ui-subagent at all — a manual ui-subagent stanza a user wrote in
+# the profile patch is intentionally preserved and keeps working.
