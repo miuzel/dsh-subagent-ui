@@ -190,7 +190,7 @@ http://127.0.0.1:3080
 
 插件只管理当前 DSH Web 客户端运行时已经发现的子代理目录，不伪造不存在的历史数据。首次加载以 40 条为一页；普通分页可以继续加载，批量时间选择最多扩展到 1000 条。
 
-公共 `SessionSummary` 不保证提供原始提示词、provider/model 或全部历史日志，因此插件不会查询或显示 provider/model。实时输出按能力探测自动切换两种公开接口：
+公共 `SessionSummary` 不保证提供原始提示词或全部历史日志，因此插件不查询、不显示提示词。**类型与模型**改由宿主的公开投影提供，见下一节；实时输出按能力探测自动切换两种公开接口：
 
 ```text
 # dsh 0.1.2-alpha.2（新 API）：绑定的事件源
@@ -205,6 +205,34 @@ sessions.binding(childId).session
 ```
 
 如果在当前宿主拿不到对应的实时数据，插件只能显示持久化的会话摘要和统计信息。
+
+### 类型与模型（只读投影）
+
+子代理的「类型」与「模型 provider/id」来自宿主的公开投影，不新增任何 RPC、也不写入任何状态：
+
+```text
+# 类型：当前浏览器运行时的子代理目录条目
+ctx.sessions.list.getSnapshot().subagentsByParent[parentId].entries
+→ entry.mode                       # one-shot | continuable
+
+# 模型：会话投影 modelSelection（按 key 能力探测，读不到即视为宿主不提供）
+ctx.sessions.list.getSnapshot().byId[childId].projectionValues.modelSelection
+→ { lastUsed, next }               # next = 待生效选择 ?? lastUsed
+→ 显示值 = next ?? lastUsed        # { provider, model, reasoningEffort? }
+```
+
+显示规则在三处完全一致，只有密度不同：
+
+| 位置 | 显示形态 |
+| --- | --- |
+| 管理面板列表行的元信息行 | 不含模型（保持原样：时间、统计） |
+| 卡片详情行（默认展开） | `类型：可继续 · 模型：newapi-test/DeepSeek-V4.1-Flash · high` |
+| 活跃子代理浮窗 | 紧凑形态：`可继续 · newapi-test/DeepSeek-V4.1-Flash · high` |
+
+- `reasoningEffort` **仅在宿主提供时**追加（` · high`），宿主不提供就不显示占位符。
+- 三处共用同一个 `modelText()` 取值函数，来源、优先级（`next ?? lastUsed`）与兜底逻辑完全相同，浮窗只省略字段标签。
+- 宿主未提供该投影（例如 **0.1.1-rc.2**）、投影值为空或 provider/model 为空串时，统一显示兜底文案 **模型未知**（英文界面 `model unknown`），不会出现空白或 `null/null`。该兜底使用独立 i18n 键 `modelUnknown`，不复用 `typeLoading`：老版本宿主上类型与模型各自独立降级（实测同行为 `类型：类型加载中… · 模型未知`）。
+- **只读、无切换入口**：插件不调用 `selectedModel` 等任何模型写入 API，也不提供模型切换 UI；官方 SDK 对子代理地址的模型选择明确不可用（`model selection is unavailable for addressed subagent sessions`）。
 
 ### 打开子代理会话的三级能力探测
 

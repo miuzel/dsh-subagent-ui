@@ -18,12 +18,30 @@ export interface SessionStats {
   steps?: number
 }
 
+/** One complete model selection as reported by the host projection. */
+export interface ModelSelection {
+  provider: string
+  model: string
+  reasoningEffort?: string
+}
+
+/**
+ * Client view of the host `modelSelection` projection. Both fields are null
+ * until the session records a request header or a selection, and the whole key
+ * is absent on hosts that do not register the projection (capability probe).
+ */
+export interface ModelSelectionProjection {
+  lastUsed: ModelSelection | null
+  next: ModelSelection | null
+}
+
 export interface ProjectionValues {
   tokenUsage?: TokenUsage
   sessionStats?: SessionStats
   turns?: number
   steps?: number
   prompt?: string
+  modelSelection?: ModelSelectionProjection
 }
 
 /** Public DSH session summary as exposed by the Web session store. */

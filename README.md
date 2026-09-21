@@ -11,6 +11,7 @@ A Web client plugin that adds a **子代理管理** button to the conversation-h
 - Group by session, workspace, category, type, or no grouping. Session headers show the workspace and parent session name.
 - Browser-local classification tabs support custom regular expressions. Built-ins include all, other, review, test, implementation, and planning.
 - One-shot children carry a compact `⚡ 一次性` badge; continuable children remain visually uncluttered.
+- Show each child's current **type and model provider/id** (`provider/model`, plus the reasoning effort when the host publishes one) from the host's public projections only — no new RPC, no model-switch UI. See [Type and model](#type-and-model-read-only-projections).
 - Archive state is local and never deletes a DSH session. Single-row archive actions and a batch mode support shift-selection, select-all, time-based selection (up to 1,000 rows), batch archive, restore, and archive-all.
 - Load catalogs in pages of 40 with an independent wheel-scroll container; batch time selection expands loading up to 1,000 children.
 - Batch mode changes cards into selection targets and hides individual archive/restore actions. The highlighted 完成 button exits batch mode.
@@ -49,7 +50,35 @@ If you previously disabled `ui-subagent` manually in `$DSH_HOME/profiles/web/cor
 
 The public DSH Web session store exposes subagent summaries that have been discovered in the current browser runtime. It deliberately does not expose a global historical subagent index or a mode for every unvisited child. Therefore this first plugin version manages the discovered catalog; rows whose type is not yet loaded remain visible and searchable and fall back to DSH's retained session navigation. Exact catalog navigation is used automatically as soon as DSH supplies the address and mode.
 
-A full persistent workspace-wide archive view requires a host-side catalog RPC (or an upstream DSH API) that enumerates every child address and its mode. The public `SessionSummary` does not expose the original prompt or provider/model route, so those are intentionally not queried or displayed. Live output and tool/context activity are read from the bound session automatically: on dsh **0.1.2-alpha.2** they are derived from the raw `binding.eventSource` event stream (showing the tool description or target filename), while older hosts (e.g. **0.1.1-rc.2**) fall back to `session.getSnapshot().chat.legacy`. Capability detection selects the path, so the plugin stays forward compatible. If the host publishes neither, the panel falls back to the durable summary. The UI is isolated in [`lib/client.js`](lib/client.js), so it can switch to a richer source without changing the panel interaction model.
+A full persistent workspace-wide archive view requires a host-side catalog RPC (or an upstream DSH API) that enumerates every child address and its mode. The public `SessionSummary` does not expose the original prompt, so prompts are neither queried nor displayed; **type and model** come from the public projections documented in [Type and model](#type-and-model-read-only-projections). Live output and tool/context activity are read from the bound session automatically: on dsh **0.1.2-alpha.2** they are derived from the raw `binding.eventSource` event stream (showing the tool description or target filename), while older hosts (e.g. **0.1.1-rc.2**) fall back to `session.getSnapshot().chat.legacy`. Capability detection selects the path, so the plugin stays forward compatible. If the host publishes neither, the panel falls back to the durable summary. The UI is isolated in [`lib/client.js`](lib/client.js), so it can switch to a richer source without changing the panel interaction model.
+
+### Type and model (read-only projections)
+
+A child's type and model come from public host projections. The plugin adds no RPC and writes no state:
+
+```text
+# type: the subagent catalog entry of the current browser runtime
+ctx.sessions.list.getSnapshot().subagentsByParent[parentId].entries
+→ entry.mode                       # one-shot | continuable
+
+# model: the session projection modelSelection (probed by key; unreadable = the host does not publish it)
+ctx.sessions.list.getSnapshot().byId[childId].projectionValues.modelSelection
+→ { lastUsed, next }               # next = pending selection ?? lastUsed
+→ displayed value = next ?? lastUsed   # { provider, model, reasoningEffort? }
+```
+
+The display rules are identical on all three surfaces and differ only in density:
+
+| Surface | Rendering |
+| --- | --- |
+| List-row meta line | no model (unchanged: relative time and summary stats) |
+| Card detail row (expanded by default) | `Type: continuable · Model: newapi-test/DeepSeek-V4.1-Flash · high` |
+| Active-subagent float | compact: `continuable · newapi-test/DeepSeek-V4.1-Flash · high` |
+
+- `reasoningEffort` is appended **only when the host supplies it** (` · high`); no placeholder is rendered otherwise.
+- All three surfaces share one `modelText()` reader, so the source, the precedence (`next ?? lastUsed`), and the fallback are the same everywhere; the float only drops the field labels.
+- When the host does not publish the projection (e.g. **0.1.1-rc.2**), when the projection value is empty, or when provider/model is an empty string, the plugin shows the explicit fallback **model unknown** (`模型未知` in Chinese) instead of a blank or `null/null`. That fallback has its own i18n key (`modelUnknown`) and never reuses `typeLoading`: on an old host the two fields degrade independently (observed row: `Type: type loading… · Model: model unknown`).
+- **Read-only, no switching**: the plugin calls no model write API such as `selectedModel` and offers no model-switch UI; the official SDK marks model selection as unavailable for addressed subagent sessions (`model selection is unavailable for addressed subagent sessions`).
 
 ## Compatibility
 

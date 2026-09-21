@@ -89,7 +89,7 @@ There is no project-defined `test` or `lint` script and no test or lint configur
 - Register UI through the existing DSH `sessions` and `slots` injections. The current slot is `conversation.session.header.actions` and the manager id is `subagent-workspace-manager`.
 - Preserve the plugin’s existing CSS class prefix (`dsh-sam-`) and local preference key (`dsh-subagent-workspace-ui/preferences`) when changing UI behavior.
 - Keep user-facing labels and accessibility attributes consistent with the existing Chinese UI unless a change explicitly requires otherwise.
-- Avoid querying or displaying prompt/provider/model data: the README documents that the public `SessionSummary` does not expose those fields.
+- Avoid querying or displaying prompt data: the public `SessionSummary` does not expose the original prompt. A child's type and model may be displayed, but only from the public read-only projections (`subagentsByParent[parentId].entries[].mode` and `byId[childId].projectionValues.modelSelection` → `next ?? lastUsed`), probed by key, with an explicit fallback (`modelUnknown`) when the host does not publish them; never add a model-switch UI or call a model write API (`selectedModel`).
 
 ## Directory guide
 
