@@ -179,7 +179,7 @@ dsh plugin --profile web remove dsh-subagent-workspace-ui
 dsh plugin --profile web add file:.
 ```
 
-插件 bundle 会自动加载 [`cordis.patch.yml`](cordis.patch.yml)：安装期间插入管理器，并且**只遮蔽一个 slot**——用 `priority: -1` 的空占位占用 `conversation.session.header.lineage`，从而让 DSH 自带的 `ui-subagent` 血统下拉保持不可见。自带 `ui-subagent` 插件本身**保持启用**（本插件不再整体禁用它），因为新版「在侧边栏打开」按钮正是复用它提供的 `subagentchat` 右侧栏标签页。该占位渲染的是会话标题而不是空内容，所以子代理会话标题不会消失。卸载插件后，这层 bundle patch 会被移除，宿主的 `ui-subagent` 设置从未被改动，恢复如初。请重启现有的 `dsh web` 进程，然后刷新：
+插件 bundle 会自动加载 [`cordis.patch.yml`](cordis.patch.yml)：安装期间插入管理器，并且**只遮蔽一个 slot**——用 `priority: -1` 的**标题位遮蔽**占用 `conversation.session.header.lineage`，从而让 DSH 自带的 `ui-subagent` 血统下拉保持不可见。自带 `ui-subagent` 插件本身**保持启用**（本插件不再整体禁用它），因为新版「在侧边栏打开」按钮正是复用它提供的 `subagentchat` 右侧栏标签页。该遮蔽渲染的是会话标题而不是空内容，所以子代理会话标题不会消失。卸载插件后，这层 bundle patch 会被移除，宿主的 `ui-subagent` 设置从未被改动，恢复如初。请重启现有的 `dsh web` 进程，然后刷新：
 
 ```text
 http://127.0.0.1:3080
