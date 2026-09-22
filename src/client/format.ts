@@ -1,5 +1,60 @@
 import type { Tr, SessionSummary, ParentSubagents, ModeInfo, SubagentRow, CwdLike, TokenUsage } from './types'
 export const age=(tr:Tr,stamp:number)=>{const seconds=Math.max(0,Math.floor((Date.now()-(stamp||Date.now()))/1000));if(seconds<60)return tr('age.sAgo',{s:seconds});const minutes=Math.floor(seconds/60);if(minutes<60)return tr('age.mAgo',{m:minutes});const hours=Math.floor(minutes/60);if(hours<24)return tr('age.hmAgo',{h:hours,m:minutes%60});return tr('age.dAgo',{d:Math.floor(hours/24)})}
+// The official cache-hit share formatter, ported expression-for-expression from
+// the host chat client (`@deepseek-ai/dsh-client-ui-chat/lib/client.js`:
+// `roundedPercentUnits`, `displayPercentUnits` and `formatCacheHitPercent`; only
+// the project's semicolon-free style and the type annotations are ours). It
+// rounds in exact integer units with positive ties rounded up — never in
+// floating point — and it never lets a partial hit read as a complete one: once
+// the ordinary precision would reach 100 while prompt tokens were missed, the
+// share gains exactly as many decimals as it takes to stay below it (99.6,
+// 99.95, 99.9999 …) instead of claiming a full cache hit.
+function roundedPercentUnits(cacheReadTokens:number,denominator:number,decimalPlaces:number){
+  const scale=(decimalPlaces===0?1:10)*100
+  const doubledScale=scale*2
+  const denominatorQuotient=Math.floor(denominator/doubledScale)
+  const denominatorRemainder=denominator%doubledScale
+  let lower=0
+  let upper=scale
+  while(lower<upper){
+    const candidate=Math.floor((lower+upper+1)/2)
+    const factor=candidate*2-1
+    if(cacheReadTokens>=factor*denominatorQuotient+Math.ceil(factor*denominatorRemainder/doubledScale))lower=candidate
+    else upper=candidate-1
+  }
+  return lower
+}
+function displayPercentUnits(units:number,decimalPlaces:number){
+  if(decimalPlaces===0)return String(units)
+  const whole=Math.floor(units/10)
+  const tenths=units%10
+  return tenths===0?String(whole):`${whole}.${tenths}`
+}
+function formatCacheHitPercent(cacheReadTokens:number,promptTokens:number,decimalPlaces:number){
+  if(promptTokens===0)return null
+  const missedInputTokens=promptTokens-cacheReadTokens
+  if(missedInputTokens===0)return '100'
+  const roundedUnits=roundedPercentUnits(cacheReadTokens,promptTokens,decimalPlaces)
+  if(roundedUnits<(decimalPlaces===0?100:1e3))return displayPercentUnits(roundedUnits,decimalPlaces)
+  let distinguishingPlaces=1
+  let scaledDoubleGap=missedInputTokens*200
+  const denominatorTens=Math.floor(promptTokens/10)
+  while(scaledDoubleGap<=denominatorTens){
+    scaledDoubleGap*=10
+    distinguishingPlaces+=1
+  }
+  const denominatorOnes=promptTokens%10
+  let roundedLoss=5
+  for(let loss=1;loss<5;loss+=1){
+    const factor=loss*2+1
+    const threshold=factor*denominatorTens+Math.floor(factor*denominatorOnes/10)
+    if(scaledDoubleGap<=threshold){
+      roundedLoss=loss
+      break
+    }
+  }
+  return `99.${'9'.repeat(distinguishingPlaces-1)}${10-roundedLoss}`
+}
 export const title:(s:SessionSummary)=>string=s=>s.title||s.displayTitle||s.id, short=(tr:Tr,v:string)=>v?v.replace(/^session-/,'').slice(0,8):tr('unknown'), workspace=(tr:Tr,s:CwdLike|undefined)=>s?.cwd?s.cwd.split(/[\\/]/).filter(Boolean).pop():tr('unknownWorkspace'), modeLabel=(tr:Tr,m:string|undefined)=>m==='one-shot'?tr('oneShot'):m==='continuable'?tr('continuable'):tr('typeLoading'), // Token arithmetic shared by every usage surface, mirroring the official chat
 // client exactly: billed input = uncached + cache read + cache write (three
 // disjoint prompt-side buckets), the usage total adds the output bucket, and the
@@ -9,16 +64,19 @@ export const title:(s:SessionSummary)=>string=s=>s.title||s.displayTitle||s.id, 
 // instead of NaN leaking into the label.
 num=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)?v:undefined,
 billedTokens=(u:TokenUsage|undefined)=>{const uncached=num(u?.uncachedInputTokens),read=num(u?.cacheReadTokens),write=num(u?.cacheWriteTokens);return uncached==null||read==null||write==null?undefined:uncached+read+write},
-// Official cache-hit semantics: a zero denominator has no share at all (the
-// caller omits the segment), a fully cached prompt reads 100, everything else is
-// the integer percent of billed input.
-cacheHitText=(read:number|undefined,billed:number|undefined)=>billed==null||billed<=0||read==null?null:read>=billed?'100':String(Math.round(read/billed*100)),
+// Official cache-hit semantics on top of the ported formatter above: a zero
+// denominator has no share at all (the caller omits the segment), a fully cached
+// prompt reads 100, a read that exceeds the billed input is meaningless and is
+// normalized to "100" as before (the official routine assumes read <= billed),
+// everything else is the official `formatCacheHitPercent` at integer precision,
+// which escalates that precision when a partial hit would otherwise round to 100.
+cacheHitText=(read:number|undefined,billed:number|undefined)=>billed==null||billed<=0||read==null?null:read>=billed?'100':formatCacheHitPercent(read,billed,0),
 // Official tps: decode tokens over decode milliseconds, integer at >=10 and one
 // decimal below; no text at all when the host reported no positive decoding
 // window (a missing/zero window must never render as "0 tps").
 tpsText=(tokens:number|undefined,ms:number|undefined)=>{const decodeTokens=num(tokens),decodeMs=num(ms);if(decodeTokens==null||decodeMs==null||decodeTokens<=0||decodeMs<=0)return null;const tps=decodeTokens/(decodeMs/1e3);return tps>=10?String(Math.round(tps)):String(Math.round(tps*10)/10)},
 durationText=(ms:number)=>ms>=10000?`${Math.round(ms/1000)}s`:`${(ms/1000).toFixed(1)}s`,
-tokenTotal:(s:SessionSummary|undefined)=>number|undefined=s=>{const u=s?.projectionValues?.tokenUsage,billed=billedTokens(u),output=num(u?.outputTokens);return billed==null||output==null?undefined:billed+output},fmt=(tr:Tr,n:number|null|undefined)=>n==null?tr('unknown'):n>=1e6?`${(n/1e6).toFixed(1)}m`:n>=1e3?`${(n/1e3).toFixed(1)}k`:String(n), promptPreview:(s:SessionSummary|undefined)=>string=s=>String(s?.prompt||s?.projectionValues?.prompt||'').slice(0,100),// The single usage reader: the host tokenUsage buckets plus the sessionStats
+fmt=(tr:Tr,n:number|null|undefined)=>n==null?tr('unknown'):n>=1e6?`${(n/1e6).toFixed(1)}m`:n>=1e3?`${(n/1e3).toFixed(1)}k`:String(n), promptPreview:(s:SessionSummary|undefined)=>string=s=>String(s?.prompt||s?.projectionValues?.prompt||'').slice(0,100),// The single usage reader: the host tokenUsage buckets plus the sessionStats
 // decode window and turn/step counters, normalized once into one object. Both
 // the inline line and the tooltip below are pure projections of THIS object, so
 // the panel detail row and the active float can never disagree (and neither can
