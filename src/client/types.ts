@@ -13,9 +13,22 @@ export interface TokenUsage {
   cacheWriteTokens: number
 }
 
+/**
+ * Counters from the same `sessionStats` projection. Read by key, with no
+ * version gate: a host that does not fold decoding timings simply omits them
+ * (the fold itself reports `decodeMs: null` before the first streamed token),
+ * and an absent key means "not reported" — never zero. `decodeTokens` over
+ * `decodeMs` is the official output speed (tps).
+ */
 export interface SessionStats {
   turns?: number
   steps?: number
+  llmMs?: number | null
+  toolMs?: number | null
+  ttftMs?: number | null
+  ttftSteps?: number | null
+  decodeMs?: number | null
+  decodeTokens?: number | null
 }
 
 /** One complete model selection as reported by the host projection. */
