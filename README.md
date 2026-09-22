@@ -12,6 +12,7 @@ A Web client plugin that adds a **子代理管理** button to the conversation-h
 - Browser-local classification tabs support custom regular expressions. Built-ins include all, other, review, test, implementation, and planning.
 - One-shot children carry a compact `⚡ 一次性` badge; continuable children remain visually uncluttered.
 - Show each child's current **type and model provider/id** (`provider/model`, plus the reasoning effort when the host publishes one) from the host's public projections only — no new RPC, no model-switch UI. See [Type and model](#type-and-model-read-only-projections).
+- Show each child's usage inline, computed with the host's own definitions: `↑ 131.3k (未缓存 39.1k) / ↓ 12.7k · 命中 70% · 104 tps · 3 轮 · 9 步` (English UI: `miss` / `Hit` / `rnds` / `stps`). The `↑` figure is the **billed input** (`uncachedInputTokens + cacheReadTokens + cacheWriteTokens`) and that billed input alone is the cache-hit denominator — exactly what DSH's own composer footer does, so the plugin and the host agree instead of disagreeing by six points. `tps` is `decodeTokens / (decodeMs / 1000)` from the same public `sessionStats` projection. Hovering the row or the floating panel reveals the complete breakdown — total, every bucket, the share, the speed, and the session's LLM / tool / TTFT timings — in the native `title` tooltip.
 - Archive state is local and never deletes a DSH session. Single-row archive actions and a batch mode support shift-selection, select-all, time-based selection (up to 1,000 rows), batch archive, restore, and archive-all.
 - Load catalogs in pages of 40 with an independent wheel-scroll container; batch time selection expands loading up to 1,000 children.
 - Batch mode changes cards into selection targets and hides individual archive/restore actions. The highlighted 完成 button exits batch mode.
@@ -87,7 +88,7 @@ The display rules are identical on all three surfaces and differ only in density
 
 ## Compatibility
 
-v1.5.0 supports dsh **0.1.6-alpha.2** and stays backward compatible with all DeepSeek Harness versions. Opening a subagent session is capability-detected at runtime and degrades in three tiers:
+v1.6.0 supports dsh **0.1.6-alpha.2** and stays backward compatible with all DeepSeek Harness versions. Opening a subagent session is capability-detected at runtime and degrades in three tiers:
 
 ```text
 # dsh 0.1.2-alpha.5 .. 0.1.6-alpha.1: the session controller entry points
@@ -121,6 +122,16 @@ Adding the sidebar capability does not change the navigation probe above: the ro
 
 Opening a subagent in the right sidebar uses DSH's own `subagentchat` right-sidebar tab, so the pane is a *session view*: the subagent session's composer there is DSH's official read-only composer (`一次性子代理记录` / "one-shot subagent record") rather than this plugin's UI. That is expected, and it is the only official way to read a child session without leaving the main conversation.
 
+
+## v1.6.0
+
+- **Feature**: every row and the active-subagent floating panel now carry an **open in the sidebar** button (`◫`) that opens the child as DSH's own `subagentchat` right-sidebar tab, so the main conversation stays where it is. It is capability-detected and never version-checked: the button is hidden entirely when the runtime exposes no `sidebarRight` / `sidebarRightTabs` capability or no tab type claims the row's address, and a single row whose address cannot be resolved stays visible but disabled with a readable reason. Clicking it never triggers the row's default navigation and never toggles batch selection. Because that sidebar tab *is* stock `ui-subagent`'s, the bundle patch no longer disables that plugin wholesale — it now only shadows `conversation.session.header.lineage` at `priority: -1` (a **title-only** shadow, so a subagent session's header title survives) and `ui-subagent` itself stays enabled. Your own `cordis.patch.yml` stanza is still preserved on removal.
+- **Feature**: the manager shows each child's **type and model** (`provider/model`, plus the reasoning effort when the host publishes one) purely from public read-only projections, with the type and the model degrading independently (`类型待加载` / `模型未知`). No new RPC, no model-switch UI.
+- **Fix**: a child's type could read `类型待加载` (*type loading*) until the manager panel had been opened once, even though the host had already published the mode — and opening the panel then flipped that same row to `一次性`. The mode was read only from the lazily pulled subagent catalog, and only the panel pulls it. It now resolves through one reader with one fallback order: ① the discovered catalog entry → ② the child's own `subagent` identity projection (pushed on the live-control stream and on every session-added summary, so a freshly loaded page already has it) → ③ the existing fallback text. A freshly spawned child's sidebar button can stay briefly disabled until that child is discovered; that is the documented capability probe, not a defect.
+- **Fix**: the inline usage figures disagreed with DSH's own composer footer for the same child (`in 39.1k / out 12.7k · cache hit 64%` versus `143K tok · Cache hit 70%`). The line showed the *uncached input* bucket labelled as "input", and it divided the cache-hit share by the four-bucket **total**, which counts output tokens in a prompt-side ratio. Both now follow the host's definitions: `↑ billed input (uncached) / ↓ output · 命中 n% · tps · turns · steps`, with the billed input alone as the denominator, and `tps = decodeTokens / (decodeMs / 1000)` from the same public `sessionStats` projection. The complete breakdown — total, every bucket, the share, the speed and the session's LLM / tool / TTFT timings — moved into the native `title` tooltip on both the row and the float. The host's cache-hit formatter is ported expression-for-expression, so a partial hit can never round up to 100%.
+- **Docs**: the lineage slot shadow is now described as what it is — a *title-only* shadow. The host's conversation module replaces the caller fallback once an entry exists in that single slot, so a literally empty entry would delete a subagent session's header title.
+
+Verified on dsh **0.1.6-alpha.2**: `pnpm run check` green, and the usage figures cross-checked against the official composer footer for the same child in a single screenshot (`132 tok/s` / `缓存命中 98%` / `29.8M tok` against `132 tps` / `命中 98%` / `↑ 29.7m + ↓ 119.6k` = `29.8M`). The cache-hit formatter is covered by a differential test that slices the three official helper functions out of the installed host client at run time and asserts identical output over 80,980 `(read, billed)` pairs — 0 mismatches, with 425 cases where the previous implementation differed.
 
 ## v1.5.0
 
