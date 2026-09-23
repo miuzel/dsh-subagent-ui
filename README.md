@@ -90,7 +90,7 @@ The display rules are identical on all three surfaces and differ only in density
 
 ## Compatibility
 
-v1.6.0 supports dsh **0.1.6-alpha.2** and stays backward compatible with all DeepSeek Harness versions. Opening a subagent session is capability-detected at runtime and degrades in three tiers:
+v1.7.0 supports dsh **0.1.6-alpha.2** and stays backward compatible with all DeepSeek Harness versions. Opening a subagent session is capability-detected at runtime and degrades in three tiers:
 
 ```text
 # dsh 0.1.2-alpha.5 .. 0.1.6-alpha.1: the session controller entry points
@@ -124,6 +124,13 @@ Adding the sidebar capability does not change the navigation probe above: the ro
 
 Opening a subagent in the right sidebar uses DSH's own `subagentchat` right-sidebar tab, so the pane is a *session view*: the subagent session's composer there is DSH's official read-only composer (`一次性子代理记录` / "one-shot subagent record") rather than this plugin's UI. That is expected, and it is the only official way to read a child session without leaving the main conversation.
 
+
+## v1.7.0
+
+- **Fix**: the **open in the sidebar** button (`◫`) — on a panel row and on the active float — was a far smaller target than the 24×24 CSS px minimum: 18.03×16 and 17.14×17, i.e. only the glyph itself was clickable. Both now measure **24.03×24** and **24.14×25**, while the layout box, the glyph position, the row heights and every neighbouring button's coordinates stay **pixel-identical**: the padding growth is cancelled by negative margins, and the hover pill moved into an `::after` pseudo-element whose insets reproduce the previous border box exactly (18.03×16 / 17.14×17). The one rendering difference is compositing order — the hover overlay now paints over the glyph instead of under it (≲1.3/255 per channel in the dark theme, ≲0.7/255 in the light one), which is imperceptible. Disabled rows keep their opacity and `not-allowed` cursor, and the larger area cannot turn a row press into a float drag: `closest('button,input,label')` is DOM ancestry, not geometry.
+- **Docs**: the dshmarket screenshots were re-shot on a real dsh **0.1.6-alpha.2** instance of the `1.7.0-dev` line (commit `79d9d0f`) — the manager panel and the active-subagents float, each in Chinese and in English (`*.en.png`, the host locale actually switched), dark theme, 1280×900 CSS at DPR 1.75. The captured session ran four background subagents at once (three running, one finished), so every row carries its real type, model and the official usage line instead of fallback text, with the `◫`, pause, hide and delete actions visible. `screenshots.json` now lists all four paths (dshmarket's carousel cap is 6), each README points at its own language pair instead of both sharing one, and the screenshot guide was rewritten — it still described controls (`show archived`, `→ archive`) that no longer exist.
+
+Verified on dsh **0.1.6-alpha.2**: `pnpm run check` green — the bundle's only change in this release is the hit-area CSS, and the screenshot work touched no source at all (four PNGs, `screenshots.json` and the two READMEs). The hit area was checked geometrically (padding / margin / `::after` insets against the previous border box) and by a pixel profile of the button column before and after; `./test.sh` smoke runs on an isolated `DSH_HOME` clicked the newly added edge on both the panel row and the float, exercised a disabled orphan row, and A/B-tested that pressing the enlarged area still opens the sidebar without starting a float drag or misfiring the neighbouring pause button.
 
 ## v1.6.0
 
