@@ -23,18 +23,20 @@ A Web client plugin that adds a **子代理管理** button to the conversation-h
 
 ## Screenshot guide
 
-The screenshots demonstrate the compact manager and active-agent floating panel:
+Both screenshots were taken on the `1.7.0-dev` line (commit `79d9d0f`) against a real dsh **0.1.6-alpha.2** instance in its dark theme. The session had four background subagents at once — three still running and one already finished — so every row could be shown with its real type, model and usage figures. The pair below is the English UI; the Chinese UI pair is in [`README.zh.md`](README.zh.md).
 
-![Subagent manager panel](docs/images/screenshot-1.png)
+![Subagent manager panel (English UI)](docs/images/screenshot-1.en.png)
 
-![Active subagent floating panel](docs/images/screenshot-2.png)
+![Active subagent floating panel (English UI)](docs/images/screenshot-2.en.png)
 
-1. **Header** — title, current-session/workspace counts, and close action.
+1. **Header** — panel title, `Current session n · Current workspace n · Active n`, the show-active-float toggle, and the close action.
 2. **Search and scope row** — ordinary name/title/workspace search, with `id: xxx` reserved for Session ID search; workspace, session, sorting, and grouping selectors stay on one compact row.
-3. **Classification row** — built-in and custom categories, with custom-category deletion inside the same tab frame.
-4. **Filter row** — hide one-shot, hide stale children, show archived, and reset filters.
-5. **Results** — collapsible active group, workspace/session group headers, Session ID beside each name, relative activity time, and archive status.
-6. **Live activity** — when available, the last two output lines or the latest tool/context status appear at the bottom of the card; the final snapshot remains gray after completion.
+3. **Classification row** — built-in and custom categories with live counts, custom-category creation and deletion inside the same tab frame.
+4. **Filter row** — hide one-shot, hide long-inactive, subagent background colour (light/dark), and reset filters.
+5. **Summary row** — `Showing n/m`, show details, show hidden, and the batch-mode entry.
+6. **Active subagents group** — pinned to the top and collapsible, with `Pause all`; each row carries the activity dot, the name, the Session ID, the relative activity time, and the `◫` open-in-the-sidebar, `⏸ Pause`, `⊘ Hide` and `🗑 Delete` actions.
+7. **Detail block** — `Type: … · Model: …` straight from the host's read-only projections, then the official usage line `↑ billed (miss …) / ↓ output · Hit n% · n tps · n rnds · n stps`; a running child also shows its latest live-output lines, while a finished child keeps its final snapshot.
+8. **Floating panel** — the running children of the current session in a compact always-on-top card, each with its live output, usage line and stop button; it appears whenever at least one child is running and the manager panel is closed.
 
 ## Install in the Web profile
 
