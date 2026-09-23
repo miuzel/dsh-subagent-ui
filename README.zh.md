@@ -60,8 +60,8 @@
 4. **筛选行** —— 隐藏一次性、隐藏长期未活跃、子代理背景色（浅色/深色）与重置筛选。
 5. **汇总行** —— `显示 n/m 个`、显示详情、显示已隐藏，以及批量操作入口。
 6. **活跃子代理分组** —— 置顶且可折叠，带「一键暂停」；每行包含活跃圆点、名称、Session ID、相对活动时间，以及 `◫` 在侧边栏打开、`⏸ 暂停`、`⊘ 隐藏`、`🗑 删除`。
-7. **详情区** —— 直接来自宿主只读投影的 `类型：… · 模型：…`，以及官方口径的用量行 `↑ 计费输入 (未缓存…) / ↓ 输出 · 命中 n% · n tps · n 轮 · n 步`；运行中的子代理还会显示最新的实时输出，已完成的保留最终快照。
-8. **活跃浮窗** —— 当前会话里运行中的子代理以紧凑浮窗常驻，每行带实时输出、用量行与暂停按钮；面板关闭且存在运行中子代理时自动出现。
+7. **详情区** —— 直接来自宿主只读投影的 `类型：… · 模型：…`，以及官方口径的用量行 `↑ 计费输入 (未缓存…) / ↓ 输出 · 命中 n% · n tps · n 轮 · n 步`；运行中的子代理都会显示最新的实时输出（不只当前选中的那一个），已完成的保留最终快照。
+8. **活跃浮窗** —— 当前会话里运行中的子代理以紧凑浮窗常驻，每行带实时输出、用量行与暂停按钮；面板关闭且存在运行中子代理时自动出现。浮窗显示期间会为其中每个运行中的子代理各自保留实时会话，与主视图当前选中哪一个无关。
 
 ### 分类标签
 
@@ -151,12 +151,22 @@
 
 实时输出具有金属光泽扫光动效；子代理结束后保留最后显示快照，并变为灰色。输出区域最多显示两行，避免持续滚动导致内容难以阅读。
 
+**每个运行中的子代理都有自己的实时流（dsh 0.1.6-alpha.2 起）**：宿主 `sessions.binding(id)` 的契约是「借用已被保留的绑定，不创建保留」，而官方客户端里唯一保留会话的是主会话视图——它只保留**当前选中**的那一个。因此插件改为自己成为保留者：`sessions.retain(target, { source: 'subagentWorkspaceUi' })` 拿到 `SessionReference`，用 `reference.binding` 取 `session` / `eventSource`，不再依赖「是否被选中」。
+
+保留是有界且成对释放的：
+
+- **浮窗常驻**：浮窗显示期间，对其中每个运行中的子代理各保留一个引用。
+- **面板仅可见行**：管理面板只对当前筛选/分组后**实际渲染出来**的运行中行保留，打开面板不会去加载全部历史子代理。
+- **上限 8**：浮窗优先，其次按最近活动优先；超出上限的运行中行按快照显示（仍有用量等持久信息）。
+- **成对释放**：行不再渲染、子代理转为非运行态、浮窗/面板关闭或插件卸载时调用 `release()`；重复释放幂等。
+
 **兼容两个 API 代际（自动探测）**：
 
-- dsh **0.1.2-alpha.2**：使用 `binding.eventSource`（原始 `SessionEvent` 事件流）推导实时输出。
+- dsh **0.1.6-alpha.2** 起：自己 `retain`（`reference.binding.eventSource` 原始 `SessionEvent` 事件流）；宿主未提供 `retain` 时回退借用式 `binding(id)`。
+- dsh **0.1.2-alpha.2**：`binding.eventSource`（原始 `SessionEvent` 事件流）推导实时输出。
 - dsh **0.1.1-rc.2** 及更早：回退 `session.getSnapshot().chat.legacy`（对话快照）路径。
 
-按能力探测自动切换，向前兼容，老版本行为不变。
+按能力探测自动切换（不判版本号），向前兼容，老版本行为不变；两条路径都拿不到绑定时，界面回退到持久化摘要。
 
 ## 界面说明
 
@@ -204,10 +214,16 @@ http://127.0.0.1:3080
 公共 `SessionSummary` 不保证提供原始提示词或全部历史日志，因此插件不查询、不显示提示词。**类型与模型**改由宿主的公开投影提供，见下一节；实时输出按能力探测自动切换两种公开接口：
 
 ```text
-# dsh 0.1.2-alpha.2（新 API）：绑定的事件源
+# dsh 0.1.6-alpha.2 起（retain 契约）：插件自己创建并持有绑定
+sessions.retain({ parentSessionId, childSessionId, mode }, { source: 'subagentWorkspaceUi' })
+→ reference.binding.eventSource   # 引用存续期间始终可用
+→ getSnapshot().entries           # 原始 SessionEvent：assistant/chunk、tool/call、tool/result…
+→ release()                       # 行不再渲染 / 停止 / 浮窗·面板关闭 / 插件卸载
+
+# 宿主没有 retain（能力探测）：回退到借用他人保留的绑定（0.1.2-alpha.2 新 API）
 sessions.binding(childId).eventSource
 → open()
-→ getSnapshot().entries   # 原始 SessionEvent：assistant/chunk、tool/call、tool/result…
+→ getSnapshot().entries
 
 # dsh 0.1.1-rc.2 及更早（旧 API）：对话快照
 sessions.binding(childId).session
@@ -215,7 +231,7 @@ sessions.binding(childId).session
 → session.getSnapshot().chat.legacy
 ```
 
-如果在当前宿主拿不到对应的实时数据，插件只能显示持久化的会话摘要和统计信息。
+如果在当前宿主拿不到对应的实时数据（没有 `retain`、也借不到绑定，或该行超出 8 个保留上限），插件只显示持久化的会话摘要和统计信息。
 
 ### 类型与模型（只读投影）
 

@@ -24,3 +24,14 @@ declare const jsx: any
 declare const jsxs: any
 
 declare let sessionsRt: import('./types').SessionsRuntime | null
+
+// Declaration merge of the host's consumer-label map: the retain contract's
+// `SessionReferenceSourceMap` is extended through the package's canonical
+// /client entry, so this plugin registers its own label (RETAIN_SOURCE in
+// retain.ts) instead of reusing the view-side `mainView`. Type-only: the build
+// ignores *.d.ts files, and the label reaches the host as a plain string.
+declare module '@deepseek-ai/dsh-api-session-controller/client' {
+  interface SessionReferenceSourceMap {
+    subagentWorkspaceUi: unknown
+  }
+}

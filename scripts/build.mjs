@@ -22,6 +22,7 @@ const MODULES = [
   'bootstrap',    // style injection, DAY/PAGE/key/defaultTabs, DEFAULT_*_BG, load
   'format',       // age/title/short/workspace/modeLabel/tokenTotal/fmt/promptPreview/statsLine/category/rootSession/modeMap/highlight
   'runtime',      // sessionsRt, NOOP
+  'retain',       // RETAIN_SOURCE/RETAIN_LIMIT, retainDeclare/retainClear, liveBindingFor
   'live-output',  // LiveOutput
   'detail',       // elapsed, compactPath, toolDetail
   'live-events',  // liveFromEvents

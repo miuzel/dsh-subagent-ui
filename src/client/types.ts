@@ -295,6 +295,57 @@ export interface SessionBinding {
   eventSource?: SessionEventSource | null
 }
 
+/* ------------------------------------------------------------------ */
+/* Retain contract (dsh 0.1.6-alpha.2 `ctx.sessions`).                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Consumer identity carried by one independent Client reference. The host's
+ * `SessionReferenceSourceMap` is declaration-merge-extensible through the
+ * package's canonical `/client` entry (see ambient.d.ts): the plugin registers
+ * its own label instead of borrowing the view-side `mainView`.
+ */
+export type SessionReferenceSource = string
+
+/**
+ * One owned use of an exact Client generation. The host declares `binding` and
+ * `sessionId` as required, but a host without the retain contract exposes none
+ * of these, so every member is probed defensively here.
+ */
+export interface SessionReference {
+  readonly sessionId?: string
+  readonly binding?: SessionBinding | null
+  readonly ready?: Promise<unknown>
+  release?: () => void
+  dispose?: () => void
+}
+
+export interface SessionRetainOptions {
+  source: SessionReferenceSource
+  signal?: AbortSignal
+}
+
+/** Local ownership counts (`retainInfo`), never persisted and never catalog facts. */
+export interface SessionRetainInfo {
+  referenceCount?: number
+  retainedBy?: Record<string, number>
+}
+
+/** One running row a surface asks this plugin to keep live. */
+export interface RetainWant {
+  childId: string
+  parentId?: string
+  mode?: SubagentMode
+  updatedAt?: number
+}
+
+/** A held reference plus the address signature it was retained for. */
+export interface RetainEntry {
+  reference: SessionReference
+  binding: SessionBinding
+  signature: string
+}
+
 /** The ctx.sessions runtime the host plugin hands to apply(). */
 export interface SessionsRuntime {
   binding?: (childId: string) => SessionBinding | null
@@ -306,6 +357,9 @@ export interface SessionsRuntime {
   setSubagentCatalogOpen?: (parentId: string, open: boolean) => void
   /* dsh 0.1.6-alpha.2: resolve an already discovered direct-parent address. */
   subagentAddress?: (childId: string) => SubagentAddress | undefined
+  /* dsh 0.1.6-alpha.2: create the binding that `binding` only borrows. */
+  retain?: (target: unknown, options: SessionRetainOptions) => SessionReference
+  retainInfo?: (childId: string) => { getSnapshot?: () => SessionRetainInfo } | null
 }
 
 /**

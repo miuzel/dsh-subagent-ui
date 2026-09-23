@@ -1,5 +1,6 @@
 import { NS, zh, en } from './i18n'
 import { Manager } from './manager'
+import { retainReleaseAll } from './retain'
 import type { LineageShadowProps, PluginCtx, UiWorkspaceRuntime } from './types'
 // Navigation capability probe. Order matters: sessions.openSubagent(address) is
 // object-capable and present through 0.1.6-alpha.1, while uiWorkspace.openSession
@@ -44,6 +45,8 @@ const subagentChatAddressOf=address=>`${SUBAGENT_CHAT_PREFIX}${encodeURIComponen
 export function apply(ctx:PluginCtx){
   sessionsRt=ctx.sessions
   ctx.effect(()=>ctx.locale.register(NS,{zh,en}),'subagent-workspace-ui: dictionaries')
+  // Plugin disposal is the last paired release: nothing may outlive the surfaces.
+  ctx.effect(()=>()=>retainReleaseAll(),'subagent-workspace-ui: retained live bindings')
   const actions={openChild:a=>{if(typeof ctx.sessions?.openSubagent==='function'){ctx.sessions.openSubagent(a);return true}const ws=uiWorkspaceOf(ctx);if(ws){ws.openSession(a);return true}if(a?.childSessionId)return actions.openSession(a.childSessionId);return false},openSession:id=>{if(typeof ctx.sessions?.open==='function'){ctx.sessions.open(id);return true}const ws=uiWorkspaceOf(ctx);if(ws){ws.openSession(id);return true}return false},refresh:p=>ctx.sessions.refreshSubagents(p),setCatalogOpen:(p,o)=>ctx.sessions.setSubagentCatalogOpen(p,o)}
   const sidebarRight=serviceOf(ctx,'sidebarRight'),tabs=serviceOf(ctx,'sidebarRightTabs'),
     asideAddressOf=(sidebarRight&&typeof sidebarRight.openResource==='function'&&tabs&&typeof tabs.candidates==='function'&&typeof ctx.sessions?.subagentAddress==='function')?row=>{
