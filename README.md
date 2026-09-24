@@ -61,12 +61,14 @@ A full persistent workspace-wide archive view requires a host-side catalog RPC (
 A child's type and model come from public host projections. The plugin adds no RPC and writes no state:
 
 ```text
-# type: one reader, two read-only rungs, resolved in this order
-ctx.sessions.list.getSnapshot().subagentsByParent[parentId].entries
+# type: one reader, read-only catalog and identity rungs, resolved in this order
+ctx.sessions.list.getSnapshot().subagentsByParent[parentId].entries           # dsh ..0.1.6-alpha.2
 → entry.mode                       # rung 1: discovered catalog entry (present once that parent's catalog was pulled)
+ctx.sessions.list.getSnapshot().byId[parentId].projectionValues.subagentCatalog   # dsh 0.1.7-rc.1..
+→ entry.mode                       # rung 1': the parent's own catalog projection (same direct children, catalog event order)
 ctx.sessions.list.getSnapshot().byId[childId].projectionValues.subagent
 → { mode, label, seq } | null      # rung 2: the child's own identity projection (pushed on the live-control stream)
-→ displayed value = rung 1 ?? rung 2   # both silent = the existing `typeLoading` text
+→ displayed value = rung 1 ?? rung 1' ?? rung 2   # all silent = the existing `typeLoading` text
 
 # model: the session projection modelSelection (probed by key; unreadable = the host does not publish it)
 ctx.sessions.list.getSnapshot().byId[childId].projectionValues.modelSelection
@@ -84,13 +86,13 @@ The display rules are identical on all three surfaces and differ only in density
 
 - `reasoningEffort` is appended **only when the host supplies it** (` · high`); no placeholder is rendered otherwise.
 - All three surfaces share one `modelText()` reader, so the source, the precedence (`next ?? lastUsed`), and the fallback are the same everywhere; the float only drops the field labels.
-- The type is resolved by one reader (`childModeOf`) with one fallback order, shared by the detail row, the row badge and the float: the discovered catalog entry first, then the child's own `subagent` identity projection. Rung 2 is what makes the type correct on a freshly loaded page **without** opening the manager panel — the host pushes that projection on the live-control stream and on every session-added summary, while rung 1 only arrives when a parent's catalog is pulled (opening the panel is one such pull). Both rungs silent keeps the existing fallback: the panel and the float show **type loading…** (`类型待加载` in Chinese), never a blank or a `null`.
+- The type is resolved by one reader (`childModeOf`) with one fallback order, shared by the detail row, the row badge and the float: the discovered catalog entry first, then the child's own `subagent` identity projection. The catalog itself has two generations — `subagentsByParent[parentId].entries` up to **0.1.6-alpha.2**, and the parent session's own `projectionValues.subagentCatalog` from **0.1.7-rc.1** on (with `projectionsBySession[parentId].values.subagentCatalog` as a defensive fallback) — and the legacy source wins whenever a host publishes both, so an older host reads exactly what it read before. Rung 2 is what makes the type correct on a freshly loaded page **without** opening the manager panel — the host pushes that projection on the live-control stream and on every session-added summary, while rung 1 only arrives when a parent's catalog is pulled (opening the panel is one such pull). Both rungs silent keeps the existing fallback: the panel and the float show **type loading…** (`类型待加载` in Chinese), never a blank or a `null`.
 - When the host does not publish the projection (e.g. **0.1.1-rc.2**), when the projection value is empty, or when provider/model is an empty string, the plugin shows the explicit fallback **model unknown** (`模型未知` in Chinese) instead of a blank or `null/null`. That fallback has its own i18n key (`modelUnknown`) and never reuses `typeLoading`: on an old host the two fields degrade independently (observed row: `Type: type loading… · Model: model unknown`).
 - **Read-only, no switching**: the plugin calls no model write API such as `selectedModel` and offers no model-switch UI; the official SDK marks model selection as unavailable for addressed subagent sessions (`model selection is unavailable for addressed subagent sessions`).
 
 ## Compatibility
 
-v1.7.0 supports dsh **0.1.6-alpha.2** and stays backward compatible with all DeepSeek Harness versions. Opening a subagent session is capability-detected at runtime and degrades in three tiers:
+v1.8.0 supports dsh **0.1.6-alpha.2** and **0.1.7-rc.1** and stays backward compatible with all DeepSeek Harness versions. Those two hosts differ in the API surface this plugin reads: 0.1.7-rc.1 **removed** `sessions.setSubagentCatalogOpen`, **renamed** `refreshSubagents(parentSessionId)` to `refreshProjections(sessionId)`, and **replaced** `SessionListState.subagentsByParent` with the parent session's own `subagentCatalog` projection. Every call site probes for the capability it needs, so both generations work and no version number is ever compared. Opening a subagent session is capability-detected at runtime and degrades in three tiers:
 
 ```text
 # dsh 0.1.2-alpha.5 .. 0.1.6-alpha.1: the session controller entry points
@@ -120,10 +122,21 @@ ctx.sessions.subagentAddress   → typeof function   (per-row address lookup)
 # with a readable reason instead of throwing.
 ```
 
+Both faces are resolved **per row and per click, never once at activation**: dsh **0.1.7-rc.1** registers `sidebarRight`/`sidebarRightTabs` only *after* a plugin's `apply` has run — on **0.1.6-alpha.2** they are already present when `apply` runs — so a probe performed once at activation hides the whole `◫` column on the newer host while leaving the older one untouched.
+
 Adding the sidebar capability does not change the navigation probe above: the row's default click still walks the same three tiers, and the new button never touches them.
 
 Opening a subagent in the right sidebar uses DSH's own `subagentchat` right-sidebar tab, so the pane is a *session view*: the subagent session's composer there is DSH's official read-only composer (`一次性子代理记录` / "one-shot subagent record") rather than this plugin's UI. That is expected, and it is the only official way to read a child session without leaving the main conversation.
 
+
+## v1.8.0
+
+- **Fix**: live output only updated for the **currently selected** subagent. `sessions.binding(id)` only *borrows* a binding somebody else retained, and the stock view retains just the session the main view has selected — so every other child had no live region at all. The plugin now **retains** each running child it is showing itself: the float keeps every running child it displays, the panel keeps the running rows it renders, both share a cap of 8 (float first, most recently active first), and each row that stops rendering or stops running, every closed surface and the plugin's disposal releases in pairs. A host without `retain`, and any child beyond the cap, still falls back to the borrowed binding and then to the durable summary. Landing with it: **Pause now works on a row that is not selected** — it previously called into a binding that did not exist and silently did nothing.
+- **Compatibility with dsh 0.1.7-rc.1**: that host **removed** `sessions.setSubagentCatalogOpen`, **renamed** `refreshSubagents(parentSessionId)` to `refreshProjections(sessionId)`, and **replaced** `SessionListState.subagentsByParent[parent]` with the parent session's own `projectionValues.subagentCatalog` projection (the same direct children in catalog event order; entries lost their `kind` discriminator and gained a third `mode: 'unknown'` arm). Un-guarded, the removed method threw out of the manager panel's open effect and the error boundary took the whole header slot down — **opening the manager crashed the title bar**. Every host call is now capability-probed and never version-checked: one reader resolves the catalog from the parent's `subagentCatalog` on 0.1.7-rc.1+ and from `subagentsByParent` up to 0.1.6-alpha.2 (the legacy source wins when a host publishes both, so older hosts read exactly what they read before), `refresh` prefers `refreshProjections` and falls back to `refreshSubagents`, and a missing `setSubagentCatalogOpen` is skipped. An entry whose `mode` is `unknown` keeps its label and yields the mode to the child's own identity projection instead of trusting that arm.
+- **Fix**: on 0.1.7-rc.1 the per-row **open in the sidebar** action (`◫`) disappeared from every row. That host registers `sidebarRight`/`sidebarRightTabs` *after* this plugin's `apply` runs, so the one-time probe at activation judged both absent for good. Both faces are now resolved per row and per click: a host that never publishes them still renders no button (byte-for-byte the previous surface), while an available face whose row address does not validate keeps the existing disabled button and its readable reason.
+- **Docs**: the type/model ladder documents both catalog generations, and the compatibility section records the 0.1.7-rc.1 API changes above.
+
+Verified on dsh **0.1.6-alpha.2** and **0.1.7-rc.1**: `pnpm run check` green (bundle freshness in sync, 98,337 bytes). On 0.1.7-rc.1 the panel opens on a live session with all 7 of its subagents, rows carrying their catalog labels, `Type: continuable`, model and usage figures, `◫` on every row, and **no console error after the click**. On 0.1.6-alpha.2 the panel object is byte-for-byte identical to the pre-change build, and the same batch of data shows the same unknowns it showed before (a child whose projections the host never published stays `model unknown`, exactly as it does on 0.1.6). The host's own `dsh-client-ui-open-in-app` logs a load-time `inactive context` error on 0.1.7-rc.1; it is unrelated to this plugin and deliberately left alone.
 
 ## v1.7.0
 

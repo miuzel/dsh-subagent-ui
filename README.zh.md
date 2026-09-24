@@ -2,7 +2,7 @@
 
 面向 DeepSeek Harness Web 的子代理管理插件。插件在会话标题栏提供一个紧凑的 `🧩 子代理 active/total` 入口，用于搜索、筛选、分组、排序、查看和批量归档当前运行时已发现的子代理。
 
-当前发布版本：**v1.7.0**
+当前发布版本：**v1.8.0**
 
 ## 主要功能
 
@@ -209,6 +209,8 @@ http://127.0.0.1:3080
 
 ## 数据边界与兼容性
 
+v1.8.0 支持 dsh **0.1.6-alpha.2** 与 **0.1.7-rc.1**，并对所有 DeepSeek Harness 版本保持向后兼容。这两代宿主的接口面不同：0.1.7-rc.1 删除了 `sessions.setSubagentCatalogOpen`、把 `refreshSubagents(parentSessionId)` 改名为 `refreshProjections(sessionId)`、并把 `SessionListState.subagentsByParent` 换成父会话自身的 `subagentCatalog` 投影。插件对每一项都做能力探测，因此两代宿主各自走可用路径，**从不比较版本号**。
+
 插件只管理当前 DSH Web 客户端运行时已经发现的子代理目录，不伪造不存在的历史数据。首次加载以 40 条为一页；普通分页可以继续加载，批量时间选择最多扩展到 1000 条。
 
 公共 `SessionSummary` 不保证提供原始提示词或全部历史日志，因此插件不查询、不显示提示词。**类型与模型**改由宿主的公开投影提供，见下一节；实时输出按能力探测自动切换两种公开接口：
@@ -238,12 +240,14 @@ sessions.binding(childId).session
 子代理的「类型」与「模型 provider/id」来自宿主的公开投影，不新增任何 RPC、也不写入任何状态：
 
 ```text
-# 类型：同一个取值函数、两级只读来源，按此顺序回退
-ctx.sessions.list.getSnapshot().subagentsByParent[parentId].entries
+# 类型：同一个取值函数，只读的目录来源与身份来源，按此顺序回退
+ctx.sessions.list.getSnapshot().subagentsByParent[parentId].entries           # dsh ..0.1.6-alpha.2
 → entry.mode                       # 第 1 级：已发现的目录条目（该父会话的目录被拉取后才存在）
+ctx.sessions.list.getSnapshot().byId[parentId].projectionValues.subagentCatalog   # dsh 0.1.7-rc.1..
+→ entry.mode                       # 第 1' 级：父会话自身的目录投影（同一批直接子代理，目录事件顺序）
 ctx.sessions.list.getSnapshot().byId[childId].projectionValues.subagent
 → { mode, label, seq } | null      # 第 2 级：子会话自身的身份投影（随实时控制流下发）
-→ 显示值 = 第 1 级 ?? 第 2 级      # 两级都拿不到 = 沿用既有 `typeLoading` 兜底文案
+→ 显示值 = 第 1 级 ?? 第 1' 级 ?? 第 2 级   # 全部拿不到 = 沿用既有 `typeLoading` 兜底文案
 
 # 模型：会话投影 modelSelection（按 key 能力探测，读不到即视为宿主不提供）
 ctx.sessions.list.getSnapshot().byId[childId].projectionValues.modelSelection
@@ -298,6 +302,8 @@ ctx.sessions.subagentAddress → 是函数（按行取地址）
 # 验证为空 → 该行按钮渲染为禁用态并给出可读说明，绝不抛异常给用户。
 ```
 
+两个能力面**按行、按次解析，绝不在激活时只探测一次**：dsh **0.1.7-rc.1** 在本插件 `apply` **之后**才注册 `sidebarRight`/`sidebarRightTabs`（**0.1.6-alpha.2** 在 `apply` 时已就绪），因此激活时的一次性探测会让新宿主上的整列 `◫` 消失，而旧宿主毫无异样。
+
 要点：
 
 - **默认点击不变**：点条目本身仍然把子代理打开到主对话区（与 v1.5.0 一致）；新按钮 `stopPropagation`，既不触发默认跳转，也不会误触批量选择。
@@ -334,6 +340,15 @@ DSH_PLUGIN_DIR=.worktrees/x ./test.sh  # 冒烟其它 checkout 的产物
 
 - UI 本地化（zh/en）由 [@Marcuss2](https://github.com/Marcuss2) 在 [PR #1](https://github.com/miuzel/dsh-subagent-ui/pull/1) 中贡献，特此致谢！
 - 子代理永久删除、会话生命周期清理及快照刷新机制的设计参考并致谢开源项目：[@heiheiha798/dsh-plugin-subagent-delete](https://github.com/heiheiha798/dsh-plugin-subagent-delete)。
+
+## v1.8.0 发布说明
+
+- **修复：只有当前被选中的子代理才更新实时输出**。`sessions.binding(id)` 只是**借用**别人已经保留的绑定，而官方视图只保留主视图当前选中的那一个会话——于是其余子代理根本没有实时区域。现改为插件**自己成为保留者**：浮窗保留它显示的每个运行中子代理、面板保留它渲染的运行中行，两者共用上限 8（浮窗优先、最近活跃优先），行停止渲染或停止运行、界面关闭、插件卸载时成对释放；宿主没有 `retain`、以及超出上限的行，仍回落到借用式绑定、再回落到持久化摘要。随之落地的一项修复：**未选中行的「暂停」现在真正生效**——此前它调用的是一个并不存在的绑定，属于静默空操作。
+- **兼容 dsh 0.1.7-rc.1**：该宿主**删除**了 `sessions.setSubagentCatalogOpen`、把 `refreshSubagents(parentSessionId)` **改名**为 `refreshProjections(sessionId)`、并把 `SessionListState.subagentsByParent[parent]` **换成**父会话自身的 `projectionValues.subagentCatalog` 投影（同一批直接子代理，目录事件顺序；条目去掉了 `kind` 判别字段，并多出一个 `mode: 'unknown'` 取值）。在缺少防护的旧实现里，被删除的方法从管理器面板的打开副作用里抛出，错误边界随即带走整个标题栏 slot——**点开管理器会让标题栏直接崩掉**。现在所有宿主调用一律能力探测、**从不比较版本号**：同一个取值函数在 0.1.7-rc.1 及以上读父会话的 `subagentCatalog`、在 0.1.6-alpha.2 及以前读 `subagentsByParent`（宿主两者都发布时旧来源优先，因此旧宿主读到的与改动前逐字相同），刷新优先 `refreshProjections`、回落 `refreshSubagents`，`setSubagentCatalogOpen` 缺失则跳过；`mode` 为 `unknown` 的条目保留 label，并把类型让给子会话自身的身份投影，而不是直接采信该取值。
+- **修复：0.1.7-rc.1 上每行的 `◫`「在侧边栏打开」整列消失**。该宿主在本插件 `apply` **之后**才注册 `sidebarRight`/`sidebarRightTabs`，激活时的一次性探测便把两者永久判为不存在。现改为**按行、按次**解析：从不发布这两个能力的宿主依旧完全不渲染按钮（与改动前逐字相同），而能力可用但该行地址校验不通过时，仍保留既有的禁用按钮与可读原因。
+- **文档**：类型/模型阶梯补上两代目录来源；兼容性小节记录上述 0.1.7-rc.1 接口变化。
+
+已在 dsh **0.1.6-alpha.2** 与 **0.1.7-rc.1** 上验证：`pnpm run check` 全绿（bundle 新鲜度一致，98,337 字节）。0.1.7-rc.1 上打开一个真实运行中的会话，面板列出全部 7 个子代理，行名回到目录标签、`Type: continuable`、模型与用量齐全、每行都有 `◫`，且**点击后控制台没有任何错误**；0.1.6-alpha.2 上面板对象与改动前逐字节相同，同一批数据仍显示与改动前相同的未知项（宿主从未发布过投影的子代理依旧是 `model unknown`，与 0.1.6 上的表现完全一致）。0.1.7-rc.1 宿主自带的 `dsh-client-ui-open-in-app` 会在加载期报一条 `inactive context`，与本插件无关，本次刻意不动。
 
 ## v1.7.0 发布说明
 
