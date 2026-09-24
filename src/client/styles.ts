@@ -5,6 +5,8 @@ export const css = `.dsh-sam-head-sub{display:flex;align-items:center;justify-co
 .dsh-sam-collapsed-left{display:inline-flex;align-items:center;gap:6px;min-width:0;overflow:hidden;text-overflow:ellipsis;flex:1}
 .dsh-sam-collapsed-right{display:inline-flex;align-items:center;gap:8px;flex:none;margin-left:auto}
 .dsh-sam-collapsed-tag{color:var(--dsw-alias-label-secondary);font-weight:500;overflow:hidden;text-overflow:ellipsis}
+.dsh-sam-collapsed-info{cursor:pointer}
+.dsh-sam-collapsed-info:focus-visible{outline:2px solid var(--dsw-alias-border-l2);outline-offset:1px}
 .dsh-sam-summary-items{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
 .dsh-sam-summary-hidden-toggle{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--dsw-alias-label-secondary);cursor:pointer;user-select:none}
 .dsh-sam-summary-hidden-toggle input{margin:0;width:13px;height:13px;cursor:pointer}.dsh-sam-row-hidden{opacity:0.42;background:rgba(0,0,0,0.08)!important}
