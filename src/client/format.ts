@@ -141,10 +141,12 @@ export const modeModelCompact=(tr:Tr,row:SubagentRow|undefined)=>`${modeLabel(tr
 // with `reason.kind === 'completed'`, `false` is every other close (a user stop
 // arrives as `aborted`, alongside error / blocked / max-tokens / crash-repair),
 // and a missing field is no verdict at all — no turn has ended yet, a turn is
-// open right now, or the host never registered the projection (it first appears
-// on 0.1.7-alpha.1). Absence is never upgraded to "completed". An interval still
-// marked `active` yields nothing either, so a stale running bit cannot paint a
-// live child with a terminal badge.
+// open right now, or the host publishes no verdict: the projection itself is
+// already there on 0.1.5-rc.3 and 0.1.6-alpha.2, but as `{ settledMs, active? }`
+// only — the field, folded from the durable `turn/end` reason, first appears on
+// 0.1.7-alpha.1, so on those hosts absence stays absence. Absence is never
+// upgraded to "completed". An interval still marked `active` yields nothing
+// either, so a stale running bit cannot paint a live child with a terminal badge.
 export const terminalOf=(row:SubagentRow|undefined)=>{const timing=row?.projectionValues?.subagentTiming,completed=timing?.lastTurnCompleted;if(completed!==true&&completed!==false)return undefined;if(timing?.active!==undefined)return undefined;return completed?'normal':'abnormal'}
 // The row marker's extra class: a running row keeps its existing indicator
 // untouched (empty suffix), and only a row that has ended AND carries a verdict
