@@ -44,3 +44,13 @@ test-results/
 # Lockfile (published npm lib with peer-only deps; keep the tree clean for git-checks)
 pnpm-lock.yaml
 
+
+# --- secrets: never commit (added by DSH secret audit) ---
+.credentials.yaml
+**/.credentials.yaml
+.env
+.env.*
+!.env.example
+!.env.template
+*.bak
+*.back
