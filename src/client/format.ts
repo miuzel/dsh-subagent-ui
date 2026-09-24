@@ -135,6 +135,25 @@ export const modelCompact=(tr:Tr,row:SubagentRow|undefined)=>modelText(row)||tr(
 // surrounding labels differ (full in the panel details, bare in the float).
 export const modeModelLine=(tr:Tr,row:SubagentRow|undefined)=>`${tr('mode.label',{mode:modeLabel(tr,row?.mode)})} · ${modelLabel(tr,row)}`
 export const modeModelCompact=(tr:Tr,row:SubagentRow|undefined)=>`${modeLabel(tr,row?.mode)} · ${modelCompact(tr,row)}`
+// The terminal verdict of an ENDED subagent, read from the host's own
+// `subagentTiming` projection and nothing else. `lastTurnCompleted` is a
+// three-way fact and all three arms matter: `true` is a turn the host closed
+// with `reason.kind === 'completed'`, `false` is every other close (a user stop
+// arrives as `aborted`, alongside error / blocked / max-tokens / crash-repair),
+// and a missing field is no verdict at all — no turn has ended yet, a turn is
+// open right now, or the host never registered the projection (it first appears
+// on 0.1.7-alpha.1). Absence is never upgraded to "completed". An interval still
+// marked `active` yields nothing either, so a stale running bit cannot paint a
+// live child with a terminal badge.
+export const terminalOf=(row:SubagentRow|undefined)=>{const timing=row?.projectionValues?.subagentTiming,completed=timing?.lastTurnCompleted;if(completed!==true&&completed!==false)return undefined;if(timing?.active!==undefined)return undefined;return completed?'normal':'abnormal'}
+// The row marker's extra class: a running row keeps its existing indicator
+// untouched (empty suffix), and only a row that has ended AND carries a verdict
+// gains one — so a host without the projection renders the byte-identical
+// `dsh-sam-dot` element this plugin rendered before the feature existed.
+export const terminalClass=(row:SubagentRow|undefined)=>{if(row?.running)return '';const ended=terminalOf(row);return ended===undefined?'':` dsh-sam-dot-${ended}`}
+// The same verdict as readable text for `title`/`aria-label` (zh + en), or
+// undefined so the marker carries no tooltip at all when there is no verdict.
+export const terminalTitle=(tr:Tr,row:SubagentRow|undefined)=>{if(row?.running)return undefined;const ended=terminalOf(row);return ended===undefined?undefined:ended==='normal'?tr('end.normalNamed',{name:row?.name}):tr('end.abnormalNamed',{name:row?.name})}
 // The right-sidebar action shared by both presentation surfaces (the manager
 // panel row and the active float). `addressOf` is the capability probe: `null`
 // means the host exposes the right-sidebar face but this row has no usable

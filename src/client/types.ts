@@ -68,6 +68,29 @@ export interface SubagentIdentityProjection {
   identity?: SubagentIdentity
 }
 
+/** One open turn interval carried by the `subagentTiming` projection. */
+export interface SubagentTimingInterval {
+  since?: number
+  through?: number
+}
+
+/**
+ * Client view of the host `subagentTiming` projection: the child's own turn
+ * clock, folded from its `turn/start` and `turn/end` events. `lastTurnCompleted`
+ * is the terminal verdict the row needs — the host writes it only when a turn
+ * ends, and only `reason.kind === 'completed'` reads true, while an aborted turn
+ * (a user stop), an errored one, a refusal, a token-ceiling stop and a
+ * crash-repaired one all read false. `turn/start` removes the field again, so an
+ * open turn reports nothing; so does every host that never registered this
+ * projection (it first appeared on 0.1.7-alpha.1). A missing verdict must stay
+ * missing — never inferred from absence.
+ */
+export interface SubagentTimingProjection {
+  settledMs?: number
+  active?: SubagentTimingInterval
+  lastTurnCompleted?: boolean
+}
+
 export interface ProjectionValues {
   tokenUsage?: TokenUsage
   sessionStats?: SessionStats
@@ -76,6 +99,8 @@ export interface ProjectionValues {
   prompt?: string
   modelSelection?: ModelSelectionProjection
   subagent?: SubagentIdentityProjection | null
+  /* dsh 0.1.7-alpha.1: how the child's own last turn ended. */
+  subagentTiming?: SubagentTimingProjection
   /* dsh 0.1.7-rc.1: the parent Session's own direct-child catalog. */
   subagentCatalog?: SubagentCatalogEntry[]
 }
