@@ -47,7 +47,20 @@ export function apply(ctx:PluginCtx){
   ctx.effect(()=>ctx.locale.register(NS,{zh,en}),'subagent-workspace-ui: dictionaries')
   // Plugin disposal is the last paired release: nothing may outlive the surfaces.
   ctx.effect(()=>()=>retainReleaseAll(),'subagent-workspace-ui: retained live bindings')
-  const actions={openChild:a=>{if(typeof ctx.sessions?.openSubagent==='function'){ctx.sessions.openSubagent(a);return true}const ws=uiWorkspaceOf(ctx);if(ws){ws.openSession(a);return true}if(a?.childSessionId)return actions.openSession(a.childSessionId);return false},openSession:id=>{if(typeof ctx.sessions?.open==='function'){ctx.sessions.open(id);return true}const ws=uiWorkspaceOf(ctx);if(ws){ws.openSession(id);return true}return false},refresh:p=>ctx.sessions.refreshSubagents(p),setCatalogOpen:(p,o)=>ctx.sessions.setSubagentCatalogOpen(p,o)}
+  // Catalog hooks are optional host capability, probed at every call and never
+  // version-checked: dsh 0.1.7-rc.1 removed setSubagentCatalogOpen outright and
+  // replaced refreshSubagents(parentSessionId) with refreshProjections(sessionId)
+  // (same session argument, "load all Session projections once per connection"),
+  // so an unguarded call threw out of the panel's open effect and the React error
+  // boundary killed the whole header slot. Both stay plain functions (the manager
+  // calls them unconditionally), turning into a no-op on a host that publishes
+  // neither, and the refresh prefers the replacement so a 0.1.7 host still pulls
+  // the parent catalog the panel needs. A projection read is fire-and-forget: the
+  // UI re-reads the store, so a failed load already falls back to the existing
+  // "type loading" text and must not surface as an unhandled rejection.
+  const fireAndForget=pending=>{if(pending&&typeof pending.catch==='function')pending.catch(error=>console.warn('subagent-workspace-ui: unable to refresh session projections',error))},
+    refreshCatalog=p=>{if(typeof ctx.sessions?.refreshProjections==='function'){fireAndForget(ctx.sessions.refreshProjections(p));return}if(typeof ctx.sessions?.refreshSubagents==='function')fireAndForget(ctx.sessions.refreshSubagents(p))}
+  const actions={openChild:a=>{if(typeof ctx.sessions?.openSubagent==='function'){ctx.sessions.openSubagent(a);return true}const ws=uiWorkspaceOf(ctx);if(ws){ws.openSession(a);return true}if(a?.childSessionId)return actions.openSession(a.childSessionId);return false},openSession:id=>{if(typeof ctx.sessions?.open==='function'){ctx.sessions.open(id);return true}const ws=uiWorkspaceOf(ctx);if(ws){ws.openSession(id);return true}return false},refresh:refreshCatalog,setCatalogOpen:(p,o)=>{if(typeof ctx.sessions?.setSubagentCatalogOpen==='function')ctx.sessions.setSubagentCatalogOpen(p,o)}}
   const sidebarRight=serviceOf(ctx,'sidebarRight'),tabs=serviceOf(ctx,'sidebarRightTabs'),
     asideAddressOf=(sidebarRight&&typeof sidebarRight.openResource==='function'&&tabs&&typeof tabs.candidates==='function'&&typeof ctx.sessions?.subagentAddress==='function')?row=>{
       try{

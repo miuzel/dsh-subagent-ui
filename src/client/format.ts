@@ -1,4 +1,4 @@
-import type { Tr, SessionSummary, ParentSubagents, ModeInfo, SubagentRow, CwdLike, TokenUsage } from './types'
+import type { Tr, SessionSummary, SessionState, CatalogEntry, SubagentRow, CwdLike, TokenUsage } from './types'
 export const age=(tr:Tr,stamp:number)=>{const seconds=Math.max(0,Math.floor((Date.now()-(stamp||Date.now()))/1000));if(seconds<60)return tr('age.sAgo',{s:seconds});const minutes=Math.floor(seconds/60);if(minutes<60)return tr('age.mAgo',{m:minutes});const hours=Math.floor(minutes/60);if(hours<24)return tr('age.hmAgo',{h:hours,m:minutes%60});return tr('age.dAgo',{d:Math.floor(hours/24)})}
 // The official cache-hit share formatter, ported expression-for-expression from
 // the host chat client (`@deepseek-ai/dsh-client-ui-chat/lib/client.js`:
@@ -98,9 +98,8 @@ statsUsageTitle=(tr:Tr,row:SubagentRow|undefined)=>{const u=usageStats(tr,row),l
 export const category=(tr:Tr,name:string)=>{const clean=name.trim();const part=clean.split(/[:：|—–-]/)[0].trim();return part.length>1&&part.length<28?part:clean.split(/\\s+/).slice(0,2).join(' ')||tr('uncategorized')},rootSession=(byId:Record<string, SessionSummary>,id:string)=>{let current=id,seen=new Set();while(current&&byId[current]?.origin==='subagent'&&byId[current].parentId&&!seen.has(current)){seen.add(current);current=byId[current].parentId}return current}
 // One reader, one fallback order, for the child's type — shared by the panel
 // detail row, the row badge and the active float so the three surfaces cannot
-// disagree. Rung 1 is the discovered parent-catalog entry
-// (`subagentsByParent[parentId].entries[].mode`), which the manager only holds
-// once that parent's catalog has been pulled; that pull is why opening the
+// disagree. Rung 1 is the discovered parent-catalog entry, which the manager only
+// holds once that parent's catalog has been pulled; that pull is why opening the
 // panel used to "fix" the type. Rung 2 is the child's own `subagent` identity
 // projection: the host pushes it on the live-control stream and on every
 // session-added summary, so a fresh child carries it before any catalog pull.
@@ -111,8 +110,19 @@ export const category=(tr:Tr,name:string)=>{const clean=name.trim();const part=c
 // `modeLabel` keeps rendering the existing `typeLoading` text; the reader never
 // fabricates a mode, and a missing projection stays capability absence.
 export const projectionMode=(s:SessionSummary|undefined)=>{const raw=s?.projectionValues?.subagent,identity=raw?.identity,mode=identity?identity.mode:raw?.mode;return mode==='one-shot'||mode==='continuable'?mode:undefined}
-export const childModeOf=(s:SessionSummary|undefined,catalog:ModeInfo|undefined)=>catalog?.mode??projectionMode(s)
-export const modeMap:(c:Record<string, ParentSubagents>|undefined)=>Record<string, ModeInfo>=c=>Object.values(c||{}).flatMap(x=>x.entries||[]).reduce((o,e)=>{if(e.kind==='child')o[e.id]={mode:e.mode,label:e.label};return o},{}), highlight=(text:unknown,term:string)=>{if(!term)return text;const parts=String(text).split(new RegExp(`(${term.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')})`,'ig'));return parts.map((part,i)=>i%2?jsx('mark',{children:part},i):part)}
+// One catalog reader for both host generations, so no caller learns which host it
+// runs on. 0.1.6-alpha.2 publishes the discovered catalog as
+// `subagentsByParent[parentId].entries` (kind-tagged `SubagentListEntry`), which
+// 0.1.7-rc.1 dropped for the parent's own `subagentCatalog` projection
+// (`{ id, createdAt, mode, label }[]` in catalog event order, no `kind`). Both are
+// folded here in host order into the same `{ id, mode, label }` rows; a legacy
+// catalog that exists is authoritative (old hosts keep their exact behavior), and
+// an `'unknown'` mode keeps the label while leaving the mode to rung 2.
+const knownMode=mode=>mode==='one-shot'||mode==='continuable'?mode:undefined
+export const catalogEntriesOf=(state:SessionState|undefined,parentId:string)=>{const legacy=state?.subagentsByParent?.[parentId]?.entries;if(Array.isArray(legacy))return legacy.filter(e=>e.kind==='child').map(e=>({id:e.id,mode:knownMode(e.mode),label:e.label}));const projected=state?.byId?.[parentId]?.projectionValues?.subagentCatalog??state?.projectionsBySession?.[parentId]?.values?.subagentCatalog;return Array.isArray(projected)?projected.filter(e=>e&&e.id).map(e=>({id:e.id,mode:knownMode(e.mode),label:e.label})):[]}
+export const catalogEntryOf=(state:SessionState|undefined,parentId:string,childId:string)=>catalogEntriesOf(state,parentId).find(e=>e.id===childId)
+export const childModeOf=(s:SessionSummary|undefined,catalog:CatalogEntry|undefined)=>catalog?.mode??projectionMode(s)
+export const modeMap:(state:SessionState|undefined)=>Record<string, CatalogEntry>=state=>{const parents=new Set<string>();Object.keys(state?.subagentsByParent||{}).forEach(id=>parents.add(id));Object.keys(state?.byId||{}).forEach(id=>{if(state?.byId?.[id]?.projectionValues?.subagentCatalog)parents.add(id)});Object.keys(state?.projectionsBySession||{}).forEach(id=>{if(state?.projectionsBySession?.[id]?.values?.subagentCatalog)parents.add(id)});const map:Record<string, CatalogEntry>={};parents.forEach(parentId=>{catalogEntriesOf(state,parentId).forEach(entry=>{if(map[entry.id]===undefined)map[entry.id]=entry})});return map}, highlight=(text:unknown,term:string)=>{if(!term)return text;const parts=String(text).split(new RegExp(`(${term.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')})`,'ig'));return parts.map((part,i)=>i%2?jsx('mark',{children:part},i):part)}
 // Model selection is a read-only capability probe: the host projection key is
 // absent on older hosts, and both of its fields are null until the session
 // records a request, so a missing value renders as the i18n fallback instead of

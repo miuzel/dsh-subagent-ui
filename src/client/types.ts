@@ -76,6 +76,8 @@ export interface ProjectionValues {
   prompt?: string
   modelSelection?: ModelSelectionProjection
   subagent?: SubagentIdentityProjection | null
+  /* dsh 0.1.7-rc.1: the parent Session's own direct-child catalog. */
+  subagentCatalog?: SubagentCatalogEntry[]
 }
 
 /** Public DSH session summary as exposed by the Web session store. */
@@ -104,9 +106,32 @@ export interface ParentSubagents {
   entries?: ChildEntry[]
 }
 
+/*
+ * dsh 0.1.7-rc.1 replaced `subagentsByParent[parent]` with the parent Session's
+ * own `subagentCatalog` projection: the same direct children in catalog event
+ * order, but keyed by shape only — no `kind` discriminator, a `createdAt`, and a
+ * third `mode: 'unknown'` arm for a child whose creation fact carried no mode
+ * (so the reader must not trust any of these fields blindly).
+ */
+export interface SubagentCatalogEntry {
+  id: string
+  createdAt?: number
+  mode?: string
+  label?: string
+}
+
+/** One shared projection value set plus its explicit-read lifecycle. */
+export interface SessionProjectionSnapshot {
+  values?: ProjectionValues
+  state?: string
+}
+
 export interface SessionState {
   byId: Record<string, SessionSummary>
-  subagentsByParent: Record<string, ParentSubagents>
+  /* dsh 0.1.7-rc.1 removed this map; read `subagentCatalog` instead. */
+  subagentsByParent?: Record<string, ParentSubagents>
+  /* dsh 0.1.7-rc.1: projection values for every Session, opened or not. */
+  projectionsBySession?: Record<string, SessionProjectionSnapshot>
   /* dsh 0.1.6-alpha.2 removed this field (selection moved to uiWorkspace). */
   current?: string
 }
@@ -118,6 +143,18 @@ export interface CwdLike {
 
 export interface ModeInfo {
   mode: SubagentMode
+  label?: string
+}
+
+/*
+ * One catalog row after either host generation has been folded: the child id
+ * plus whatever the host published. `mode` stays optional because the 0.1.7
+ * catalog's `'unknown'` arm carries a label without a usable mode — the reader
+ * drops the mode and keeps the label rather than the other way round.
+ */
+export interface CatalogEntry {
+  id: string
+  mode?: SubagentMode
   label?: string
 }
 
@@ -351,7 +388,10 @@ export interface SessionsRuntime {
   binding?: (childId: string) => SessionBinding | null
   list?: { getSnapshot?: () => SessionState }
   refresh?: () => void
+  /* dsh 0.1.7-rc.1 deleted setSubagentCatalogOpen and replaced refreshSubagents
+     with refreshProjections(sessionId); every call site capability-probes. */
   refreshSubagents?: (parentId: string) => void
+  refreshProjections?: (sessionId: string) => void
   open?: (sessionId: string) => void
   openSubagent?: (address: unknown) => void
   setSubagentCatalogOpen?: (parentId: string, open: boolean) => void
