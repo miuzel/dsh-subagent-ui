@@ -471,7 +471,7 @@ export interface ActiveFloatProps {
   onLiveChange: (value: boolean) => void
   liveCap: number
   /* Right-sidebar capability: both are absent when the host exposes no such face. */
-  asideAddressOf?: ((row: SubagentRow) => string | null) | null
+  asideAddressOf?: ((row: SubagentRow) => string | null | undefined) | null
   openAside?: ((address: string) => boolean) | null
 }
 
@@ -485,7 +485,7 @@ export interface ManagerProps {
   sessionId?: string
   actions?: { setView?: (viewId: string) => void }
   /* Right-sidebar capability: both are absent when the host exposes no such face. */
-  asideAddressOf?: ((row: SubagentRow) => string | null) | null
+  asideAddressOf?: ((row: SubagentRow) => string | null | undefined) | null
   openAside?: ((address: string) => boolean) | null
 }
 

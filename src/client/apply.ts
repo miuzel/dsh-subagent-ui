@@ -61,22 +61,32 @@ export function apply(ctx:PluginCtx){
   const fireAndForget=pending=>{if(pending&&typeof pending.catch==='function')pending.catch(error=>console.warn('subagent-workspace-ui: unable to refresh session projections',error))},
     refreshCatalog=p=>{if(typeof ctx.sessions?.refreshProjections==='function'){fireAndForget(ctx.sessions.refreshProjections(p));return}if(typeof ctx.sessions?.refreshSubagents==='function')fireAndForget(ctx.sessions.refreshSubagents(p))}
   const actions={openChild:a=>{if(typeof ctx.sessions?.openSubagent==='function'){ctx.sessions.openSubagent(a);return true}const ws=uiWorkspaceOf(ctx);if(ws){ws.openSession(a);return true}if(a?.childSessionId)return actions.openSession(a.childSessionId);return false},openSession:id=>{if(typeof ctx.sessions?.open==='function'){ctx.sessions.open(id);return true}const ws=uiWorkspaceOf(ctx);if(ws){ws.openSession(id);return true}return false},refresh:refreshCatalog,setCatalogOpen:(p,o)=>{if(typeof ctx.sessions?.setSubagentCatalogOpen==='function')ctx.sessions.setSubagentCatalogOpen(p,o)}}
-  const sidebarRight=serviceOf(ctx,'sidebarRight'),tabs=serviceOf(ctx,'sidebarRightTabs'),
-    asideAddressOf=(sidebarRight&&typeof sidebarRight.openResource==='function'&&tabs&&typeof tabs.candidates==='function'&&typeof ctx.sessions?.subagentAddress==='function')?row=>{
+  // The right-sidebar faces are resolved per call, never once at activation:
+  // dsh 0.1.7-rc.1 publishes sidebarRight/sidebarRightTabs after this plugin's
+  // apply runs, so a one-time probe silently removed the row's sidebar button on
+  // that host. A host that never publishes them keeps the previous surface
+  // (`undefined` renders no button at all), while an available face whose row
+  // address does not validate keeps the existing disabled button.
+  const sidebarServices=()=>{const sidebarRight=serviceOf(ctx,'sidebarRight'),tabs=serviceOf(ctx,'sidebarRightTabs'),sessions=ctx.sessions;return typeof sidebarRight?.openResource==='function'&&typeof tabs?.candidates==='function'&&typeof sessions?.subagentAddress==='function'?{sidebarRight,tabs,sessions}:null},
+    asideAddressOf=row=>{
+      const services=sidebarServices()
+      if(!services)return undefined
       try{
-        const address=ctx.sessions.subagentAddress(row.id)
+        const address=services.sessions.subagentAddress(row.id)
         if(!address||!address.parentSessionId||!address.childSessionId||!address.mode)return null
         const value=subagentChatAddressOf(address)
-        if(tabs.candidates(value).length===0)return null
+        if(services.tabs.candidates(value).length===0)return null
         return value
       }catch(error){console.warn('subagent-workspace-ui: unable to resolve a sidebar address',error);return null}
-    }:null,
-    openAside=asideAddressOf?address=>{
+    },
+    openAside=address=>{
       // `preferNewPane` is the placement the stock "open aside" action uses, so a
       // split-capable column keeps the main conversation visible. openResource
       // expands the column itself; toggling it here would fight that.
-      try{sidebarRight.openResource(address,{preferNewPane:true});return true}catch(error){console.warn('subagent-workspace-ui: unable to open the sidebar resource',address,error);return false}
-    }:null,
+      const services=sidebarServices()
+      if(!services)return false
+      try{services.sidebarRight.openResource(address,{preferNewPane:true});return true}catch(error){console.warn('subagent-workspace-ui: unable to open the sidebar resource',address,error);return false}
+    },
     face=()=>({...actions,asideAddressOf,openAside})
   ctx.slots.inject('conversation.session.header.actions',()=>ctx.slots.register({name:'conversation.session.header.actions',id:'subagent-workspace-manager',order:100,locale:NS,inject:face},Manager))
   ctx.slots.inject('conversation.session.header.lineage',()=>ctx.slots.register({name:'conversation.session.header.lineage',priority:-1},LineageShadow))
