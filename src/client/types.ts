@@ -318,6 +318,16 @@ export interface SessionFace {
   open?: () => unknown
   cancel?: () => unknown
   configureSubagent?: (address: SubagentAddress) => unknown
+  /*
+   * One prompt channel into this Session, and the continue capability itself: a
+   * host that does not publish it renders no continue action at all. `content`
+   * is a parts array carrying non-whitespace text (the host refuses a `file`
+   * part for a subagent continuation) and `mode` is the delivery, `queue` or
+   * `steer`. An addressed Session routes the call to the host's subagent prompt
+   * with `mode: 'continuable'`, which is what re-runs a finished child; the
+   * result is `{ ok: true, ... }` or `{ ok: false, error }`.
+   */
+  prompt?: (content: unknown[], mode: string, signal?: unknown, requestId?: unknown) => unknown
   getSnapshot?: () => SessionSnapshot | undefined
   subscribe?: (notify: () => void) => Unsubscribe | void
 }
