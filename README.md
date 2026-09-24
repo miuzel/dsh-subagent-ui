@@ -92,7 +92,9 @@ The display rules are identical on all three surfaces and differ only in density
 
 ## Compatibility
 
-v1.8.0 supports dsh **0.1.6-alpha.2** and **0.1.7-rc.1** and stays backward compatible with all DeepSeek Harness versions. Those two hosts differ in the API surface this plugin reads: 0.1.7-rc.1 **removed** `sessions.setSubagentCatalogOpen`, **renamed** `refreshSubagents(parentSessionId)` to `refreshProjections(sessionId)`, and **replaced** `SessionListState.subagentsByParent` with the parent session's own `subagentCatalog` projection. Every call site probes for the capability it needs, so both generations work and no version number is ever compared. Opening a subagent session is capability-detected at runtime and degrades in three tiers:
+v1.8.0 and later support dsh **0.1.5-rc.3**, **0.1.6-alpha.2** and **0.1.7-rc.1** and stay backward compatible with all DeepSeek Harness versions. Those hosts span two API tiers — 0.1.5-rc.3 and 0.1.6-alpha.2 still publish `subagentsByParent`, `refreshSubagents` and `setSubagentCatalogOpen`, while 0.1.7-rc.1 **removed** `sessions.setSubagentCatalogOpen`, **renamed** `refreshSubagents(parentSessionId)` to `refreshProjections(sessionId)`, and **replaced** `SessionListState.subagentsByParent` with the parent session's own `subagentCatalog` projection. Every call site probes for the capability it needs, so both generations work and no version number is ever compared. Opening a subagent session is capability-detected at runtime and degrades in three tiers:
+
+A smoke run on **0.1.5-rc.3** shows no degradation on that line: on a fresh instance with one running child the manager opens on the live session with the child's catalog label, `Type: continuable`, the concrete model id, `◫` on the row, the pause/hide/delete actions, the live-output section rendering that child's running `bash` tool, and the usage figures — with no error from this plugin in the console.
 
 ```text
 # dsh 0.1.2-alpha.5 .. 0.1.6-alpha.1: the session controller entry points

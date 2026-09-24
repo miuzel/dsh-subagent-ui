@@ -209,7 +209,9 @@ http://127.0.0.1:3080
 
 ## 数据边界与兼容性
 
-v1.8.0 支持 dsh **0.1.6-alpha.2** 与 **0.1.7-rc.1**，并对所有 DeepSeek Harness 版本保持向后兼容。这两代宿主的接口面不同：0.1.7-rc.1 删除了 `sessions.setSubagentCatalogOpen`、把 `refreshSubagents(parentSessionId)` 改名为 `refreshProjections(sessionId)`、并把 `SessionListState.subagentsByParent` 换成父会话自身的 `subagentCatalog` 投影。插件对每一项都做能力探测，因此两代宿主各自走可用路径，**从不比较版本号**。
+v1.8.0 及以后版本支持 dsh **0.1.5-rc.3**、**0.1.6-alpha.2** 与 **0.1.7-rc.1**，并对所有 DeepSeek Harness 版本保持向后兼容。这些宿主分属两代接口——0.1.5-rc.3 与 0.1.6-alpha.2 仍发布 `subagentsByParent`、`refreshSubagents` 与 `setSubagentCatalogOpen`，而 0.1.7-rc.1 删除了 `sessions.setSubagentCatalogOpen`、把 `refreshSubagents(parentSessionId)` 改名为 `refreshProjections(sessionId)`、并把 `SessionListState.subagentsByParent` 换成父会话自身的 `subagentCatalog` 投影。插件对每一项都做能力探测，因此两代宿主各自走可用路径，**从不比较版本号**。
+
+**0.1.5-rc.3** 上实测无降级：全新实例 + 一个运行中子代理时，管理器在实时会话上正常打开，行显示目录标签、`类型：可继续`、具体模型 id、`◫`、暂停/隐藏/删除、渲染该子代理正在运行的 `bash` 工具的实时输出区，以及用量数字——控制台没有来自本插件的错误。
 
 插件只管理当前 DSH Web 客户端运行时已经发现的子代理目录，不伪造不存在的历史数据。首次加载以 40 条为一页；普通分页可以继续加载，批量时间选择最多扩展到 1000 条。
 
