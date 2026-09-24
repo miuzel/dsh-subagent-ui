@@ -27,4 +27,6 @@ body[data-ds-dark-theme] .dsh-sam-row-hidden{background:rgba(255,255,255,0.03)!i
 .dsh-sam-side-btn-compact::after{left:4px;right:3px;top:4px;bottom:4px}
 .dsh-sam-lineage-title{max-width:220px;color:var(--dsw-alias-label-tertiary);text-overflow:ellipsis;white-space:nowrap;background:0 0;border:none;border-radius:12px;padding:4px 8px;font-family:inherit;font-size:12px;line-height:18px;overflow:hidden;cursor:pointer}
 .dsh-sam-lineage-current{color:var(--dsw-alias-label-primary);cursor:default;font-weight:500}
+.dsh-sam-dot.dsh-sam-dot-normal{background:transparent;box-shadow:inset 0 0 0 2px var(--dsw-alias-state-success-primary,#42bd7b)}
+.dsh-sam-dot.dsh-sam-dot-abnormal{background:var(--dsw-alias-state-error-primary,#ef4444);box-shadow:0 0 0 3px rgba(236,19,19,.14)}
 `
