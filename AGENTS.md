@@ -56,7 +56,7 @@ Confirm the package version in `package.json` and complete npm 2FA when prompted
 
 After each feature/fix set is tested and you are asked to release, follow this order:
 
-1. On the current dev branch: bump `package.json` version and update the release notes (README.zh.md release-notes block at the top, and a short `## vX.Y.Z` section in README.md).
+1. On the current dev branch: bump `package.json` version and write the release notes into `CHANGELOG.md` and `CHANGELOG.zh.md` (the new version's section at the top of each file, newest first; the two files are kept in sync, with the English file brief and the Chinese file carrying the complete history). The READMEs carry no release-note bodies — each links to the two changelogs.
 2. Run `node --check` on both lib files for syntax.
 3. Merge the dev branch into `main` (fast-forward when `main` has not diverged).
 4. Create an annotated tag on `main` at the release commit, e.g. `git tag -a vX.Y.Z -m "Release vX.Y.Z"`.
@@ -99,11 +99,12 @@ There is no project-defined `test` or `lint` script and no test or lint configur
 - `scripts/build.mjs` — builds `lib/client.js` from `src/client/` (sucrase + linker + wrapper).
 - `scripts/verify-build.mjs` — migration proof / delta viewer: compares the generated bundle with the pre-refactor golden (default ref `v1.3.4`) up to insignificant whitespace (token-level and line-level comparison) and prints any intentional differences.
 - `scripts/verify-fresh.mjs` — bundle freshness gate used by `pnpm run check` (fails on a stale committed bundle).
-- `docs/images/` — README screenshots (`screenshot-1.png` and `screenshot-2.png`).
+- `docs/images/` — README screenshots (`screenshot-1.png` and `screenshot-2.png`); the README banner is `docs/banner.png`.
 - `cordis.patch.yml` — bundle patch that inserts this plugin and shadows exactly one stock slot (`conversation.session.header.lineage` at `priority: -1`) so DSH’s stock `ui-subagent` lineage dropdown stays invisible while installed. The stock `ui-subagent` plugin is intentionally left enabled: the row/floating-panel “open in the sidebar” button reuses its `subagentchat` right-sidebar tab.
 - `test.sh` — local DSH Web smoke setup described above.
 - `package.json` — package metadata, exports, DSH client injection declarations, peer dependency, and scripts.
-- `README.md` / `README.zh.md` — feature, installation, runtime-boundary, and validation documentation.
+- `README.md` / `README.zh.md` — feature, installation, runtime-boundary, and validation documentation; they carry no release-note bodies, only a link to the changelogs.
+- `CHANGELOG.md` / `CHANGELOG.zh.md` — release history, newest first (English brief back to v1.3.2; Chinese complete back to v1.0.1). Not listed in `files`, so it ships to GitHub only, and the READMEs link to it with absolute GitHub URLs.
 
 ## Known gotchas
 

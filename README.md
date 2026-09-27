@@ -1,28 +1,95 @@
 # DSH Subagent Workspace UI
 
+**English** | [中文](README.zh.md)
+
+![DSH Subagent Workspace UI — a subagent manager panel with a live floating panel](docs/banner.png)
+
+[![npm version](https://img.shields.io/npm/v/dsh-subagent-workspace-ui?label=npm&color=cb3837)](https://www.npmjs.com/package/dsh-subagent-workspace-ui)
+[![npm downloads](https://img.shields.io/npm/dm/dsh-subagent-workspace-ui?label=downloads&color=blue)](https://www.npmjs.com/package/dsh-subagent-workspace-ui)
+[![license](https://img.shields.io/npm/l/dsh-subagent-workspace-ui?label=license&color=green)](LICENSE)
+[![listed in awesome-dsh-plugin (an aggregated index, not an official curated list)](https://img.shields.io/badge/awesome--dsh--plugin-listed-blue)](https://awesome-dsh-plugin.com/)
+
 A Web client plugin that adds a **子代理管理** button to the conversation-header action row. It opens a searchable panel for the subagents currently discovered by the DSH client runtime.
 
+Current release: **v1.9.0** — full history in [`CHANGELOG.md`](https://github.com/miuzel/dsh-subagent-ui/blob/HEAD/CHANGELOG.md) (English) and [`CHANGELOG.zh.md`](https://github.com/miuzel/dsh-subagent-ui/blob/HEAD/CHANGELOG.zh.md) (中文).
+
+## Install in the Web profile
+
+Install the published package from npm into your DSH Web profile:
+
+```bash
+dsh plugin --profile web add dsh-subagent-workspace-ui
+```
+
+Upgrade to the latest published version:
+
+```bash
+dsh plugin --profile web add dsh-subagent-workspace-ui@latest
+# or, equivalently:
+dsh plugin --profile web update dsh-subagent-workspace-ui
+```
+
+Uninstall:
+
+```bash
+dsh plugin --profile web remove dsh-subagent-workspace-ui
+```
+
+`dsh plugin --profile <name> <args…>` forwards its arguments to pnpm inside that profile, so the usual `add` / `update` / `remove` subcommands apply. No `--allow-build` flag is needed: the published tarball already ships a prebuilt `lib/`, and the package declares no install-time lifecycle scripts.
+
+The bundle includes [`cordis.patch.yml`](cordis.patch.yml), which inserts the manager and shadows exactly one stock slot: `conversation.session.header.lineage` is claimed by a `priority: -1` title-only shadow so DSH's stock `ui-subagent` lineage dropdown stays invisible while this package is installed. The stock `ui-subagent` plugin itself is **left enabled** — this package no longer disables it wholesale, because the sidebar tab it provides is the navigation target of the new "open in the sidebar" button. The shadow renders the session title instead of an empty entry, so the subagent session header keeps its title. Removing the package removes this bundle layer, and the host's `ui-subagent` setting is untouched, so your own configuration is restored as it was. Restart the existing `dsh web` process, then refresh `http://127.0.0.1:3080` after the plugin is available.
+
+If you previously disabled `ui-subagent` manually in `$DSH_HOME/profiles/web/cordis.patch.yml`, you can keep that stanza: it is user-owned and intentionally preserved. The plugin no longer needs (or writes) such a stanza.
+
+Working on a checkout instead of the npm release? See [Local checkout (contributors)](#local-checkout-contributors).
+
 ## Features
+
+### Scope: entry, workspace and session
 
 - Compact title-bar trigger shows the active-child count and animated activity dot without opening the panel.
 - Defaults to the main session's current workspace and current session, even when the user is viewing a child session.
 - Workspace and session selectors support current workspace, all workspaces, named workspaces, current session, and named sessions.
+- Show session IDs beside names, compact metadata, token totals, and creation time in the relative-time tooltip.
+- Ordinary search matches names, titles and workspace names; the `id:` prefix searches Session IDs only (`id: graph:g-a92e1406`).
+
+### Search, sorting and grouping
+
 - Sort by recent activity, name, or type; recently running children remain near the top after they finish.
 - Group by session, workspace, category, type, or no grouping. Session headers show the workspace and parent session name.
+
+### Categories
+
 - Browser-local classification tabs support custom regular expressions. Built-ins include all, other, review, test, implementation, and planning.
 - One-shot children carry a compact `⚡ 一次性` badge; continuable children remain visually uncluttered.
-- Show each child's current **type and model provider/id** (`provider/model`, plus the reasoning effort when the host publishes one) from the host's public projections only — no new RPC, no model-switch UI. See [Type and model](#type-and-model-read-only-projections).
-- Show each child's usage inline, computed with the host's own definitions: `↑ 131.3k (未缓存 39.1k) / ↓ 12.7k · 命中 70% · 104 tps · 3 轮 · 9 步` (English UI: `miss` / `Hit` / `rnds` / `stps`). The `↑` figure is the **billed input** (`uncachedInputTokens + cacheReadTokens + cacheWriteTokens`) and that billed input alone is the cache-hit denominator — exactly what DSH's own composer footer does, so the plugin and the host agree instead of disagreeing by six points. `tps` is `decodeTokens / (decodeMs / 1000)` from the same public `sessionStats` projection. Hovering the row or the floating panel reveals the complete breakdown — total, every bucket, the share, the speed, and the session's LLM / tool / TTFT timings — in the native `title` tooltip.
+
+### Filtering and hiding
+
+- The filter block (category tabs, scope/session selectors, sorting, grouping, options) opens **collapsed by default**, showing one summary line (`Current workspace · Current session … · All`, then `Sort · recent activity` and `Group · by session`). That summary line is itself the disclosure control — click it, or press Enter/Space (`role=button` / `aria-expanded`) — and the preference is still persisted.
+- Filtering and hiding are plugin-local: a hidden child simply leaves the list, no DSH session or workspace file is deleted, and the header counts subtract it. The options row offers hide one-shot, hide long-inactive, show hidden, the show-active-float toggle, a separately configurable subagent background colour for the dark and light themes, and reset filters.
+
+### Pause, continue and one-click pause
+
+- A running continuable child can be paused from its own row, from the active-subagent group header (`⏸ Pause all`, with a confirmation), or from the floating panel.
+- An ended continuable row offers **`▶ Continue`** next to pause/hide/delete and sends one **localized** continue instruction into the child (Chinese UI `继续`, English UI `continue`) through the session face the host really exposes: `sessions.retain(…)` → `binding.session.prompt([…], 'queue')` where `retain` exists (0.1.6-alpha.2 on, including 0.1.7-rc.1), and the borrowed `sessions.binding` face on 0.1.5-rc.3, which has no `retain`. Pure capability probing, never a version check: a host without such a face renders no button at all, and running and one-shot rows never show it.
+
+### Batch operations and permanent deletion
+
 - Archive state is local and never deletes a DSH session. Single-row archive actions and a batch mode support shift-selection, select-all, time-based selection (up to 1,000 rows), batch archive, restore, and archive-all.
-- Load catalogs in pages of 40 with an independent wheel-scroll container; batch time selection expands loading up to 1,000 children.
 - Batch mode changes cards into selection targets and hides individual archive/restore actions. The highlighted 完成 button exits batch mode.
-- Open a loaded child at its exact `{ parentSessionId, childSessionId, mode }` address. In normal mode the whole card opens the child; archive controls do not.
-- Every row also carries a dedicated **open in the sidebar** button (`◫`) that opens the child as a right-sidebar tab, so the main conversation stays where it is. The button stops propagation (it never triggers the row's default navigation and never toggles batch selection), and it is rendered only when the runtime exposes the sidebar capability: without `ctx.sidebarRight` plus a type that claims the address, the button is hidden entirely; for a single row whose subagent address cannot be resolved it stays visible but disabled with a readable reason. The same button is on the active-subagent floating panel.
-- Show session IDs beside names, compact metadata, token totals, and creation time in the relative-time tooltip.
+- Load catalogs in pages of 40 with an independent wheel-scroll container; batch time selection expands loading up to 1,000 children.
+
+### Live activity and streaming output
+
 - Active children are grouped at the top in a collapsible section. The panel shows the latest two lines of live output, recent tool calls, context injection, command status, and a gray final snapshot after completion — for **every** running row, not only the selected child, because the plugin retains its own session binding instead of borrowing whatever the main view happens to hold.
 - Ended rows mark how the last turn finished, from the child's own public read-only `subagentTiming.lastTurnCompleted` projection: a normal end is a **hollow green ring**, an abnormal one (stopped/aborted, error, blocked, a token ceiling …) a **solid red dot**, each with a zh/en hover label. A host that does not publish the projection keeps exactly the previous dot — an unknown end is never shown as a normal one — and a running row keeps its original green dot.
-- An ended continuable row offers **`▶ Continue`** next to pause/hide/delete and sends one **localized** continue instruction into the child (Chinese UI `继续`, English UI `continue`) through the session face the host really exposes: `sessions.retain(…)` → `binding.session.prompt([…], 'queue')` where `retain` exists (0.1.6-alpha.2 on, including 0.1.7-rc.1), and the borrowed `sessions.binding` face on 0.1.5-rc.3, which has no `retain`. Pure capability probing, never a version check: a host without such a face renders no button at all, and running and one-shot rows never show it.
-- The filter block (category tabs, scope/session selectors, sorting, grouping, options) opens **collapsed by default**, showing one summary line (`Current workspace · Current session … · All`, then `Sort · recent activity` and `Group · by session`). That summary line is itself the disclosure control — click it, or press Enter/Space (`role=button` / `aria-expanded`) — and the preference is still persisted.
+
+### Opening and inspecting a child
+
+- Open a loaded child at its exact `{ parentSessionId, childSessionId, mode }` address. In normal mode the whole card opens the child; archive controls do not. The navigation tiers are documented under [Compatibility](#compatibility).
+- Every row also carries a dedicated **open in the sidebar** button (`◫`) that opens the child as a right-sidebar tab, so the main conversation stays where it is. The button stops propagation (it never triggers the row's default navigation and never toggles batch selection), and it is rendered only when the runtime exposes the sidebar capability: without `ctx.sidebarRight` plus a type that claims the address, the button is hidden entirely; for a single row whose subagent address cannot be resolved it stays visible but disabled with a readable reason. The same button is on the active-subagent floating panel.
+- Show each child's current **type and model provider/id** (`provider/model`, plus the reasoning effort when the host publishes one) from the host's public projections only — no new RPC, no model-switch UI. See [Type and model](#type-and-model-read-only-projections).
+- Show each child's usage inline, computed with the host's own definitions: `↑ 131.3k (未缓存 39.1k) / ↓ 12.7k · 命中 70% · 104 tps · 3 轮 · 9 步` (English UI: `miss` / `Hit` / `rnds` / `stps`). The `↑` figure is the **billed input** (`uncachedInputTokens + cacheReadTokens + cacheWriteTokens`) and that billed input alone is the cache-hit denominator — exactly what DSH's own composer footer does, so the plugin and the host agree instead of disagreeing by six points. `tps` is `decodeTokens / (decodeMs / 1000)` from the same public `sessionStats` projection. Hovering the row or the floating panel reveals the complete breakdown — total, every bucket, the share, the speed, and the session's LLM / tool / TTFT timings — in the native `title` tooltip.
 
 ## Screenshot guide
 
@@ -31,6 +98,8 @@ Both screenshots were taken on the `1.7.0-dev` line (commit `79d9d0f`) against a
 ![Subagent manager panel (English UI)](docs/images/screenshot-1.en.png)
 
 ![Active subagent floating panel (English UI)](docs/images/screenshot-2.en.png)
+
+### Legend
 
 1. **Header** — panel title, `Current session n · Current workspace n · Active n`, the show-active-float toggle, and the close action.
 2. **Search and scope row** — ordinary name/title/workspace search, with `id: xxx` reserved for Session ID search; workspace, session, sorting, and grouping selectors stay on one compact row.
@@ -41,23 +110,13 @@ Both screenshots were taken on the `1.7.0-dev` line (commit `79d9d0f`) against a
 7. **Detail block** — `Type: … · Model: …` straight from the host's read-only projections, then the official usage line `↑ billed (miss …) / ↓ output · Hit n% · n tps · n rnds · n stps`; a running child also shows its latest live-output lines, while a finished child keeps its final snapshot.
 8. **Floating panel** — the running children of the current session in a compact always-on-top card, each with its live output, usage line and stop button; it appears whenever at least one child is running and the manager panel is closed. While it is shown it keeps every running child it lists live, independently of which child the main view has selected.
 
-## Install in the Web profile
-
-From this directory:
-
-```bash
-dsh plugin --profile web add file:.
-```
-
-The bundle includes [`cordis.patch.yml`](cordis.patch.yml), which inserts the manager and shadows exactly one stock slot: `conversation.session.header.lineage` is claimed by a `priority: -1` title-only shadow so DSH's stock `ui-subagent` lineage dropdown stays invisible while this package is installed. The stock `ui-subagent` plugin itself is **left enabled** — this package no longer disables it wholesale, because the sidebar tab it provides is the navigation target of the new "open in the sidebar" button. The shadow renders the session title instead of an empty entry, so the subagent session header keeps its title. Removing the package removes this bundle layer, and the host's `ui-subagent` setting is untouched, so your own configuration is restored as it was. Restart the existing `dsh web` process, then refresh `http://127.0.0.1:3080` after the plugin is available.
-
-If you previously disabled `ui-subagent` manually in `$DSH_HOME/profiles/web/cordis.patch.yml`, you can keep that stanza: it is user-owned and intentionally preserved. The plugin no longer needs (or writes) such a stanza.
-
 ## Runtime data boundary
 
 The public DSH Web session store exposes subagent summaries that have been discovered in the current browser runtime. It deliberately does not expose a global historical subagent index or a mode for every unvisited child. Therefore this first plugin version manages the discovered catalog; rows whose type is not yet loaded remain visible and searchable and fall back to DSH's retained session navigation. Exact catalog navigation is used automatically as soon as DSH supplies the address and mode.
 
 A full persistent workspace-wide archive view requires a host-side catalog RPC (or an upstream DSH API) that enumerates every child address and its mode. The public `SessionSummary` does not expose the original prompt, so prompts are neither queried nor displayed; **type and model** come from the public projections documented in [Type and model](#type-and-model-read-only-projections). Live output and tool/context activity are read from a bound session automatically: on dsh **0.1.2-alpha.2** they are derived from the raw `binding.eventSource` event stream (showing the tool description or target filename), while older hosts (e.g. **0.1.1-rc.2**) fall back to `session.getSnapshot().chat.legacy`. On hosts with the retain contract (**0.1.6-alpha.2** and on) the plugin first **retains** each running child itself — `sessions.binding(id)` merely borrows a binding somebody else retained, so without retaining, only the child the main view had selected ever streamed. Retention is bounded to 8 children (the float first, then the panel's rendered running rows, most recently active first) and is released as soon as a row stops rendering or stops running, when a surface closes, or when the plugin is disposed; a child beyond the cap, and any host without `retain`, falls back to the borrowed binding and then to the durable summary. Capability detection selects the path (never a version check), so the plugin stays forward compatible. The UI is isolated in [`lib/client.js`](lib/client.js), so it can switch to a richer source without changing the panel interaction model.
+
+Archive, category and recent-use order are kept in browser `localStorage`; nothing is ever written into the DSH session log.
 
 ### Type and model (read-only projections)
 
@@ -95,9 +154,11 @@ The display rules are identical on all three surfaces and differ only in density
 
 ## Compatibility
 
-v1.8.0 and later support dsh **0.1.5-rc.3**, **0.1.6-alpha.2** and **0.1.7-rc.1** and stay backward compatible with all DeepSeek Harness versions. Those hosts span two API tiers — 0.1.5-rc.3 and 0.1.6-alpha.2 still publish `subagentsByParent`, `refreshSubagents` and `setSubagentCatalogOpen`, while 0.1.7-rc.1 **removed** `sessions.setSubagentCatalogOpen`, **renamed** `refreshSubagents(parentSessionId)` to `refreshProjections(sessionId)`, and **replaced** `SessionListState.subagentsByParent` with the parent session's own `subagentCatalog` projection. Every call site probes for the capability it needs, so both generations work and no version number is ever compared. Opening a subagent session is capability-detected at runtime and degrades in three tiers:
+v1.8.0 and later support dsh **0.1.5-rc.3**, **0.1.6-alpha.2** and **0.1.7-rc.1** and stay backward compatible with all DeepSeek Harness versions. Those hosts span two API tiers — 0.1.5-rc.3 and 0.1.6-alpha.2 still publish `subagentsByParent`, `refreshSubagents` and `setSubagentCatalogOpen`, while 0.1.7-rc.1 **removed** `sessions.setSubagentCatalogOpen`, **renamed** `refreshSubagents(parentSessionId)` to `refreshProjections(sessionId)`, and **replaced** `SessionListState.subagentsByParent` with the parent session's own `subagentCatalog` projection. Every call site probes for the capability it needs, so both generations work and no version number is ever compared.
 
 A smoke run on **0.1.5-rc.3** shows no degradation on that line: on a fresh instance with one running child the manager opens on the live session with the child's catalog label, `Type: continuable`, the concrete model id, `◫` on the row, the pause/hide/delete actions, the live-output section rendering that child's running `bash` tool, and the usage figures — with no error from this plugin in the console.
+
+### Session navigation (three capability tiers)
 
 ```text
 # dsh 0.1.2-alpha.5 .. 0.1.6-alpha.1: the session controller entry points
@@ -111,6 +172,8 @@ ctx.get('uiWorkspace').openSession({ parentSessionId, childSessionId, mode } | s
 ```
 
 `uiWorkspace` is read through `ctx.get('uiWorkspace')`, never through a required injection, so hosts that do not register the service (everything before **0.1.2-alpha.5**) still load and keep using the session-controller path, while hosts that removed `openSubagent`/`open` (**0.1.6-alpha.2**) use the workspace service. **The probe order follows the argument shape, not the version**: `sessions.openSubagent` accepts an address object on every host that has it, whereas `uiWorkspace.openSession` only accepts a `SessionTarget` from **0.1.6-alpha.2** on — on **0.1.5-alpha.2 … 0.1.6-alpha.1** it is `openSession(sessionId)` and routes through `sessions.open(id)`, which throws on an address. The session-controller tier is therefore tried first and the workspace service is the fallback. Within the controller tier the exact `{ parentSessionId, childSessionId, mode }` address is used first and only a missing mode/child falls back to plain session navigation, because `openSubagent` rejects addresses that are not healthy catalog children. The 0.1.2-series capability paths (live output via `binding.eventSource`, chat-tab switch via slot `actions`) remain the primary branches, and the **0.1.1-rc.2** legacy fallbacks (`chat.legacy` snapshot) are unchanged.
+
+### Open in the sidebar (◫ button)
 
 The **open in the sidebar** button follows the same rule — capability detection, never a version check:
 
@@ -132,70 +195,8 @@ Both faces are resolved **per row and per click, never once at activation**: dsh
 Adding the sidebar capability does not change the navigation probe above: the row's default click still walks the same three tiers, and the new button never touches them.
 
 Opening a subagent in the right sidebar uses DSH's own `subagentchat` right-sidebar tab, so the pane is a *session view*: the subagent session's composer there is DSH's official read-only composer (`一次性子代理记录` / "one-shot subagent record") rather than this plugin's UI. That is expected, and it is the only official way to read a child session without leaving the main conversation.
-## v1.9.0
 
-- **Feature**: an ended subagent can be **continued from its own row**. The row action group (`⏸ Pause` / `⊘ Hide` / `🗑 Delete`) gains `▶ Continue`, which sends one **localized** continue instruction into that child (Chinese UI `继续`, English UI `continue`) so it runs again. The implementation is pure capability probing and **never compares a version**: a host with `retain` (0.1.6-alpha.2 on, including 0.1.7-rc.1) goes `sessions.retain(…)` → `binding.session.prompt([{ type: 'text', text: '继续' }], 'queue')` (the English UI passes `'continue'`), while **0.1.5-rc.3** has no `retain` and uses the same face obtained by borrowing `sessions.binding`, which works just as well. A host without that capability **renders no button**; running rows and one-shot rows never show it either; the manager panel itself lives in the parent session's header, so "the parent agent must be alive" is satisfied by construction in normal use (an unavailable parent only logs a console warning instead of becoming an uncaught rejection).
-- **Feature**: the **filter block opens collapsed**. On first open the manager shows a single summary line (`Current workspace · Current session … · All`, plus `Sort · recent activity` and `Group · by session`); clicking that summary line expands or collapses the block, and Enter/Space do the same (`role=button` / `aria-expanded`). The preference is still persisted. A bug falls out with it: with the preference unset the toggle could only collapse and never expand, because `!undefined === true`.
-- **Feature**: an **ended row separates a normal end from an abnormal one**. A normal end is a hollow green ring, an abnormal one (⏸ stopped/aborted, error, blocked, max-tokens …) a solid red dot, each with a zh/en hover label (`正常结束` / `异常结束`). The verdict comes only from the child's own public read-only `subagentTiming.lastTurnCompleted` projection (the host writes it on `turn/end` and removes it on `turn/start`); a host that does not publish the projection **keeps the previous dot**, so an unknown end is never rendered as a normal one. The verdict field itself is projected by the host only from **dsh 0.1.7-alpha.1**: **0.1.5-rc.3** and **0.1.6-alpha.2** publish `{ settledMs, active? }` only, so on those two hosts an ended row keeps the neutral dot and does not distinguish how it ended. Running rows keep their original green dot.
-- **Compatibility**: all three changes are capability-probed and **never version-checked**; v1.9.0 supports dsh **0.1.5-rc.3** / **0.1.6-alpha.2** / **0.1.7-rc.1** exactly as v1.8.0 does (verified on all three hosts; the terminal indicator stays a neutral dot on 0.1.5-rc.3 and 0.1.6-alpha.2 per the boundary above). The only code changes are the row-action alignment (`src/client/styles.ts`) and one corrected comment (`src/client/format.ts`); the rest is the version bump and docs, and `pnpm run check` is green with the bundle freshness in sync.
-
-## v1.8.0
-
-- **Fix**: live output only updated for the **currently selected** subagent. `sessions.binding(id)` only *borrows* a binding somebody else retained, and the stock view retains just the session the main view has selected — so every other child had no live region at all. The plugin now **retains** each running child it is showing itself: the float keeps every running child it displays, the panel keeps the running rows it renders, both share a cap of 8 (float first, most recently active first), and each row that stops rendering or stops running, every closed surface and the plugin's disposal releases in pairs. A host without `retain`, and any child beyond the cap, still falls back to the borrowed binding and then to the durable summary. Landing with it: **Pause now works on a row that is not selected** — it previously called into a binding that did not exist and silently did nothing.
-- **Compatibility with dsh 0.1.7-rc.1**: that host **removed** `sessions.setSubagentCatalogOpen`, **renamed** `refreshSubagents(parentSessionId)` to `refreshProjections(sessionId)`, and **replaced** `SessionListState.subagentsByParent[parent]` with the parent session's own `projectionValues.subagentCatalog` projection (the same direct children in catalog event order; entries lost their `kind` discriminator and gained a third `mode: 'unknown'` arm). Un-guarded, the removed method threw out of the manager panel's open effect and the error boundary took the whole header slot down — **opening the manager crashed the title bar**. Every host call is now capability-probed and never version-checked: one reader resolves the catalog from the parent's `subagentCatalog` on 0.1.7-rc.1+ and from `subagentsByParent` up to 0.1.6-alpha.2 (the legacy source wins when a host publishes both, so older hosts read exactly what they read before), `refresh` prefers `refreshProjections` and falls back to `refreshSubagents`, and a missing `setSubagentCatalogOpen` is skipped. An entry whose `mode` is `unknown` keeps its label and yields the mode to the child's own identity projection instead of trusting that arm.
-- **Fix**: on 0.1.7-rc.1 the per-row **open in the sidebar** action (`◫`) disappeared from every row. That host registers `sidebarRight`/`sidebarRightTabs` *after* this plugin's `apply` runs, so the one-time probe at activation judged both absent for good. Both faces are now resolved per row and per click: a host that never publishes them still renders no button (byte-for-byte the previous surface), while an available face whose row address does not validate keeps the existing disabled button and its readable reason.
-- **Docs**: the type/model ladder documents both catalog generations, and the compatibility section records the 0.1.7-rc.1 API changes above.
-- **Tweak**: the active float pins its background at **exactly 95% opacity**. dsh **0.1.7-rc.1** redefined `--dsw-specific-menu` as a translucent glass colour — `#30313680` in the dark theme (alpha `0x80` = 50%) and `#f8f9fa94` in the light one (58%) — where 0.1.6 pointed that same token at the opaque `--dsw-alias-bg-layer-3`, so the float turned see-through on the newer host. It now composites the host's **opaque** surface token at 95% (`color-mix`, with the previous declaration kept ahead of it as the fallback for a host without `color-mix`), which also makes the float's density identical on 0.1.6 and 0.1.7 — no version check, and the tone still comes from the host's own theme tokens.
-
-Verified on dsh **0.1.6-alpha.2** and **0.1.7-rc.1**: `pnpm run check` green (bundle freshness in sync, 98,439 bytes). On 0.1.7-rc.1 the panel opens on a live session with all 7 of its subagents, rows carrying their catalog labels, `Type: continuable`, model and usage figures, `◫` on every row, and **no console error after the click**. On 0.1.6-alpha.2 the panel object is byte-for-byte identical to the pre-change build, and the same batch of data shows the same unknowns it showed before (a child whose projections the host never published stays `model unknown`, exactly as it does on 0.1.6). The float's background was then measured on a live 0.1.7-rc.1 instance with a running child: it renders `rgb(51,52,54)`, the exact value `#353638` at 95% predicts over the `rgb(21,21,23)` header backdrop behind it, where the previous 50% glass would have rendered `rgb(34,35,38)`; sampling the same float over a backdrop 22 levels lighter (`rgb(43,43,45)`) moved it by at most one level, which is what a 95% surface does and a 50% one cannot (it would have moved 11 levels). The host's own `dsh-client-ui-open-in-app` logs a load-time `inactive context` error on 0.1.7-rc.1; it is unrelated to this plugin and deliberately left alone.
-
-## v1.7.0
-
-- **Fix**: the **open in the sidebar** button (`◫`) — on a panel row and on the active float — was a far smaller target than the 24×24 CSS px minimum: 18.03×16 and 17.14×17, i.e. only the glyph itself was clickable. Both now measure **24.03×24** and **24.14×25**, while the layout box, the glyph position, the row heights and every neighbouring button's coordinates stay **pixel-identical**: the padding growth is cancelled by negative margins, and the hover pill moved into an `::after` pseudo-element whose insets reproduce the previous border box exactly (18.03×16 / 17.14×17). The one rendering difference is compositing order — the hover overlay now paints over the glyph instead of under it (≲1.3/255 per channel in the dark theme, ≲0.7/255 in the light one), which is imperceptible. Disabled rows keep their opacity and `not-allowed` cursor, and the larger area cannot turn a row press into a float drag: `closest('button,input,label')` is DOM ancestry, not geometry.
-- **Docs**: the dshmarket screenshots were re-shot on a real dsh **0.1.6-alpha.2** instance of the `1.7.0-dev` line (commit `79d9d0f`) — the manager panel and the active-subagents float, each in Chinese and in English (`*.en.png`, the host locale actually switched), dark theme, 1280×900 CSS at DPR 1.75. The captured session ran four background subagents at once (three running, one finished), so every row carries its real type, model and the official usage line instead of fallback text, with the `◫`, pause, hide and delete actions visible. `screenshots.json` now lists all four paths (dshmarket's carousel cap is 6), each README points at its own language pair instead of both sharing one, and the screenshot guide was rewritten — it still described controls (`show archived`, `→ archive`) that no longer exist.
-
-Verified on dsh **0.1.6-alpha.2**: `pnpm run check` green — the bundle's only change in this release is the hit-area CSS, and the screenshot work touched no source at all (four PNGs, `screenshots.json` and the two READMEs). The hit area was checked geometrically (padding / margin / `::after` insets against the previous border box) and by a pixel profile of the button column before and after; `./test.sh` smoke runs on an isolated `DSH_HOME` clicked the newly added edge on both the panel row and the float, exercised a disabled orphan row, and A/B-tested that pressing the enlarged area still opens the sidebar without starting a float drag or misfiring the neighbouring pause button.
-
-## v1.6.0
-
-- **Feature**: every row and the active-subagent floating panel now carry an **open in the sidebar** button (`◫`) that opens the child as DSH's own `subagentchat` right-sidebar tab, so the main conversation stays where it is. It is capability-detected and never version-checked: the button is hidden entirely when the runtime exposes no `sidebarRight` / `sidebarRightTabs` capability or no tab type claims the row's address, and a single row whose address cannot be resolved stays visible but disabled with a readable reason. Clicking it never triggers the row's default navigation and never toggles batch selection. Because that sidebar tab *is* stock `ui-subagent`'s, the bundle patch no longer disables that plugin wholesale — it now only shadows `conversation.session.header.lineage` at `priority: -1` (a **title-only** shadow, so a subagent session's header title survives) and `ui-subagent` itself stays enabled. Your own `cordis.patch.yml` stanza is still preserved on removal.
-- **Feature**: the manager shows each child's **type and model** (`provider/model`, plus the reasoning effort when the host publishes one) purely from public read-only projections, with the type and the model degrading independently (`类型待加载` / `模型未知`). No new RPC, no model-switch UI.
-- **Fix**: a child's type could read `类型待加载` (*type loading*) until the manager panel had been opened once, even though the host had already published the mode — and opening the panel then flipped that same row to `一次性`. The mode was read only from the lazily pulled subagent catalog, and only the panel pulls it. It now resolves through one reader with one fallback order: ① the discovered catalog entry → ② the child's own `subagent` identity projection (pushed on the live-control stream and on every session-added summary, so a freshly loaded page already has it) → ③ the existing fallback text. A freshly spawned child's sidebar button can stay briefly disabled until that child is discovered; that is the documented capability probe, not a defect.
-- **Fix**: the inline usage figures disagreed with DSH's own composer footer for the same child (`in 39.1k / out 12.7k · cache hit 64%` versus `143K tok · Cache hit 70%`). The line showed the *uncached input* bucket labelled as "input", and it divided the cache-hit share by the four-bucket **total**, which counts output tokens in a prompt-side ratio. Both now follow the host's definitions: `↑ billed input (uncached) / ↓ output · 命中 n% · tps · turns · steps`, with the billed input alone as the denominator, and `tps = decodeTokens / (decodeMs / 1000)` from the same public `sessionStats` projection. The complete breakdown — total, every bucket, the share, the speed and the session's LLM / tool / TTFT timings — moved into the native `title` tooltip on both the row and the float. The host's cache-hit formatter is ported expression-for-expression, so a partial hit can never round up to 100%.
-- **Docs**: the lineage slot shadow is now described as what it is — a *title-only* shadow. The host's conversation module replaces the caller fallback once an entry exists in that single slot, so a literally empty entry would delete a subagent session's header title.
-
-Verified on dsh **0.1.6-alpha.2**: `pnpm run check` green, and the usage figures cross-checked against the official composer footer for the same child in a single screenshot (`132 tok/s` / `缓存命中 98%` / `29.8M tok` against `132 tps` / `命中 98%` / `↑ 29.7m + ↓ 119.6k` = `29.8M`). The cache-hit formatter is covered by a differential test that slices the three official helper functions out of the installed host client at run time and asserts identical output over 80,980 `(read, billed)` pairs — 0 mismatches, with 425 cases where the previous implementation differed.
-
-## v1.5.0
-
-- **Fix**: on DeepSeek Harness **0.1.6-alpha.2** clicking a subagent row failed with `TypeError: ctx.sessions.openSubagent is not a function` (the click was silently swallowed by the row's `try`/`catch`, so the panel just looked dead). 0.1.6-alpha.2 removed `sessions.openSubagent(address)` and `sessions.open(id)`; the plugin now detects the navigation capability at runtime in three tiers (`sessions.openSubagent` → `sessions.open` → `uiWorkspace.openSession`) instead of hard-switching, so the same bundle keeps working on both sides of that upstream change, and the failure is surfaced in the UI when no navigation API exists at all.
-- **Fix**: the tier order above is argument-shape driven, because **0.1.5-alpha.2 … 0.1.6-alpha.1** ships a `uiWorkspace.openSession(sessionId)` that only accepts a string id and throws `sessions.select: unknown session [object Object]` for an address, while `sessions.openSubagent(address)` is still present and does accept one on those hosts. Trying the workspace service first there swallowed that throw and showed the "unsupported version" notice, so the address now goes to the object-capable controller entry point first and `uiWorkspace` remains the fallback for 0.1.6-alpha.2+. Verified live on both sides of the band: on **0.1.5-alpha.1** (client packages 0.1.5-rc.2) the reordered bundle switches session in ~142 ms with no alert and no navigation error, and on **0.1.6-alpha.2** the served bundle still resolves to `uiWorkspace.openSession` and opens the child session.
-- **Fix**: 0.1.6-alpha.2 also dropped the `current` field from the session list snapshot, which the current-session resolution and the Chat-tab fallback relied on. Both now degrade gracefully: the fallback recognizes a missing `current`, tries the host's own Chat tab immediately, and gives up quietly after 2 s instead of polling for 8 s.
-
-## v1.4.0
-
-- **Compatibility**: supports DeepSeek Harness **0.1.5-rc.2**, backward compatible with all dsh versions. 0.1.5-rc.2 changed the conversation view structure (the slot renderer no longer injects store `actions` into entries that do not declare a store, and the selected view is now persisted per session, with new tabs such as Trajectory) — clicking a subagent lands back on the Chat tab again (when `actions` is unavailable the plugin clicks the host's own Chat tab, preserving the host's activation and persistence semantics). The 0.1.2 capability-detection path remains the untouched primary branch and the 0.1.1 legacy fallback is unchanged.
-- **TypeScript migration**: `src/client/*.ts` is now the single source of truth and `lib/client.js` is generated by `pnpm run build` (sucrase type erasure + deterministic linker) instead of being hand-written. New tooling: `verify-build` (token/line-level diff against the v1.3.4 hand-written golden — migration equivalence proof and delta viewer for intentional changes) and `verify-fresh` (stale-bundle gate); `pnpm run check` runs build + typecheck + syntax + freshness in one shot.
-- **Fix**: a latent `scopeKey` ReferenceError in the collapsed filter summary (found during the TypeScript migration) is corrected to `workspaceKey`.
-
-## v1.3.4
-
-- **Feature**: the whole UI is localized through DSH client-locale (zh/en, AI-assisted English strings). Labels, buttons, stats, live output (context injection / thinking / tool details) and confirm dialogs now use translation keys and follow the host language. Contributed by [@Marcuss2](https://github.com/Marcuss2) in [PR #1](https://github.com/miuzel/dsh-subagent-ui/pull/1) — thank you!
-
-## v1.3.3
-
-- **Fix**: batch delete no longer errors on large selections (host request-body limit raised to 8 MiB).
-- **Feature**: with details hidden, hovering a row/name shows the stats (`输入/输出 · 缓存命中 · 轮数 · 步数`) via the title tooltip.
-- **Fix**: live output now shows context injection (`上下文注入 · <form>`) and the thinking state.
-- **Feature**: while thinking, a rotating "思考中…" spinner indicates the state instead of the low-priority reasoning text.
-
-## v1.3.2
-
-- **Performance**: the manager now does one base scan (`subagentRows`) and derives `allRows`/`activeRows`/`tabCounts` from it (no repeated full scans or `modeMap` merges), `tabCounts` is computed from a deferred value and is skipped while the panel is closed, and `useSessions` subscribes only the fields the manager reads. Live output is capped to a few simultaneous subagents (`liveCap`, default 3, `0` = unlimited) and fully releases its subscriptions when live display is off or the float/panel is closed.
-- **UX**: opening a subagent now auto-switches the session to the Chat tab.
-- **Fix**: the batch "select N hours ago" now selects the truly-old subagents in the current view (accurate count) and no longer overwrites or re-selects your manual changes.
-
-## Validation
+## Development and validation
 
 The client bundle `lib/client.js` is **generated from the TypeScript sources** in [`src/client/`](src/client/) — edit those, never the bundle, then rebuild:
 
@@ -207,7 +208,17 @@ pnpm run check    # build + tsc --noEmit + node --check lib/index.js + bundle fr
 
 `pnpm run verify:build` compares the generated bundle with the hand-written pre-refactor bundle (git ref `v1.3.4`) up to insignificant whitespace, using token-level and line-level comparison. After the migration it doubles as a delta viewer that prints the exact differences of any intentional change.
 
-Smoke-test a specific dsh version:
+### Local checkout (contributors)
+
+To iterate on a clone instead of the npm release, install the working tree into the Web profile from the repository root:
+
+```bash
+dsh plugin --profile web add file:.
+```
+
+Profile installs are store copies, so after editing `src/client/*.ts` you must run `pnpm run build` and re-add the plugin (or run `./test.sh`) before the Web UI can pick the change up. The host-entry (`lib/index.js`) path always needs a `dsh web` restart. The same contributor loop is documented in [`AGENTS.md`](AGENTS.md).
+
+### Smoke test (any dsh version)
 
 ```bash
 ./test.sh                                      # local dsh, port 8084
@@ -219,8 +230,14 @@ DSH_PLUGIN_DIR=.worktrees/x ./test.sh          # smoke another checkout's bundle
 
 The script always uses an isolated `DSH_HOME` (`$HOME/tmp/dsh-test`, override with `DSH_SMOKE_HOME=…`) and refuses to touch the real `~/.dsh` profile. With `DSH_VERSION` set it runs `pnpx @deepseek-ai/dsh@<version>`; pnpm 12 ignores dependency lifecycle scripts by default, so the script passes `--allow-build=<pkg>` for dsh's native dependencies (`DSH_ALLOW_BUILDS=…` overrides the list).
 
+## Release notes
+
+Full release notes — every version, newest first — live in the changelog:
+
+- [`CHANGELOG.md`](https://github.com/miuzel/dsh-subagent-ui/blob/HEAD/CHANGELOG.md) — English, back to v1.3.2.
+- [`CHANGELOG.zh.md`](https://github.com/miuzel/dsh-subagent-ui/blob/HEAD/CHANGELOG.zh.md) — 中文完整版, back to v1.0.1.
+
 ## Acknowledgements
 
 - UI localization (zh/en) contributed by [@Marcuss2](https://github.com/Marcuss2) via [PR #1](https://github.com/miuzel/dsh-subagent-ui/pull/1) — many thanks!
 - Subagent permanent deletion and session cleanup design inspired by and referencing [@heiheiha798/dsh-plugin-subagent-delete](https://github.com/heiheiha798/dsh-plugin-subagent-delete).
-
