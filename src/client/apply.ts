@@ -32,6 +32,30 @@ const LineageShadow=({displayTitle,lineageSessionId,useSessions,openTitle}:Linea
   const open=typeof openTitle==='function'?openTitle:null
   return jsx('button',{type:'button',className:open?'dsh-sam-lineage-title':'dsh-sam-lineage-title dsh-sam-lineage-current',disabled:!open,title:displayTitle,onClick:open||undefined,children:displayTitle})
 }
+// Header-actions shadow. The stock ui-subagent plugin registers a SECOND entry
+// into `conversation.session.header.actions` — `id: "subagent-catalog"`,
+// `order: -30` — which draws the official "N subagents" count dropdown as soon
+// as the current session's catalog projection is loaded. That registration
+// arrived in dsh 0.1.7-rc.1 and never collided with the manager, because a `list`
+// slot gives every `id` its own cell: the manager owns
+// `subagent-workspace-manager` and the stock catalog owned its own, so both
+// showed. The manager already covers this surface, so the declarative shadow is
+// extended to it: a cell renders its lowest-priority live entry, and -1 outranks
+// the stock registration's default 0 without colliding with it (the stock
+// plugin's four other registrations, including the `subagentchat` right-sidebar
+// tab the manager reuses, are untouched). This entry renders nothing.
+const CatalogShadow=()=>null
+// Shared by both shadows. The slots core rejects a second registration at a
+// (cell, priority) pair that is already taken, so a host that later ships its
+// own lineage entry or its own `subagent-catalog` at -1 must cost that shadow
+// only. The inject callback runs inside the host's effect machinery, where an
+// escaping throw tears down the injection — and the synchronous one from
+// `inject` itself would fail the whole apply — so catch, warn, and leave the
+// official entry visible instead.
+const registerShadow=(ctx,slot,options,component)=>ctx.slots.inject(slot,()=>{
+  try{return ctx.slots.register(options,component)}
+  catch(error){console.warn('subagent-workspace-ui: unable to shadow',options.id??slot,error);return()=>{}}
+})
 // Canonical `subagentchat` resource address. The stock ui-subagent bundle keeps
 // both the prefix and its builder inside its own module closure (it exports only
 // `inject` and `apply`, so `require()` cannot hand the builder over), which
@@ -89,5 +113,6 @@ export function apply(ctx:PluginCtx){
     },
     face=()=>({...actions,asideAddressOf,openAside})
   ctx.slots.inject('conversation.session.header.actions',()=>ctx.slots.register({name:'conversation.session.header.actions',id:'subagent-workspace-manager',order:100,locale:NS,inject:face},Manager))
-  ctx.slots.inject('conversation.session.header.lineage',()=>ctx.slots.register({name:'conversation.session.header.lineage',priority:-1},LineageShadow))
+  registerShadow(ctx,'conversation.session.header.actions',{name:'conversation.session.header.actions',id:'subagent-catalog',priority:-1},CatalogShadow)
+  registerShadow(ctx,'conversation.session.header.lineage',{name:'conversation.session.header.lineage',priority:-1},LineageShadow)
 }

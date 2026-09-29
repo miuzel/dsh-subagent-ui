@@ -287,13 +287,15 @@ ctx.sessions.list.getSnapshot().byId[childId].projectionValues.modelSelection
 
 ## 兼容性
 
-v1.8.0 及以后版本支持 dsh **0.1.5-rc.3**、**0.1.6-alpha.2**、**0.1.7-rc.1** 与 **0.2.0-rc.1**，并对所有 DeepSeek Harness 版本保持向后兼容。这些宿主分属两代接口——0.1.5-rc.3 与 0.1.6-alpha.2 仍发布 `subagentsByParent`、`refreshSubagents` 与 `setSubagentCatalogOpen`，而 0.1.7-rc.1 删除了 `sessions.setSubagentCatalogOpen`、把 `refreshSubagents(parentSessionId)` 改名为 `refreshProjections(sessionId)`、并把 `SessionListState.subagentsByParent` 换成父会话自身的 `subagentCatalog` 投影。插件对每一项都做能力探测，因此两代宿主各自走可用路径，**从不比较版本号**。
+v1.8.0 及以后版本支持 dsh **0.1.5-rc.3**、**0.1.6-alpha.2**、**0.1.7-rc.1**、**0.1.7-rc.2** 与 **0.2.0-rc.1**，并对所有 DeepSeek Harness 版本保持向后兼容。这些宿主分属两代接口——0.1.5-rc.3 与 0.1.6-alpha.2 仍发布 `subagentsByParent`、`refreshSubagents` 与 `setSubagentCatalogOpen`，而 0.1.7-rc.1 删除了 `sessions.setSubagentCatalogOpen`、把 `refreshSubagents(parentSessionId)` 改名为 `refreshProjections(sessionId)`、并把 `SessionListState.subagentsByParent` 换成父会话自身的 `subagentCatalog` 投影。插件对每一项都做能力探测，因此两代宿主各自走可用路径，**从不比较版本号**。
 
 **0.2.0-rc.1** 用同一套方法核对——以 **0.1.7-rc.1** 为基线逐包比对（23 个宿主包，外加 CLI、app-boot 与 web 前端），**不把 release note 当接口变更清单**——结论同样是**无需适配**：本插件读取的宿主面没有任何结构性变化。它注册的两个 slot 声明、模块加载壳及其种子 `require` 键、`subagentCatalog` / `subagent` / `subagentTiming` 三个投影（含世代性字段 `lastTurnCompleted`）、`subagentAddress` / `openResource` / `candidates`、`dsh plugin --profile web add` 流程，以及本插件用到的全部 21 个 `--dsw-*` token，都未变或仅纯增量；契约上唯一的新增是可选参数 `fork(onCreated)`（本插件不调用），而宿主 web graph 移除 `ui-schedule` 行既不触及本插件，也不影响它的 slot 屏蔽。两处差异可见但不构成破坏：面板与浮窗玻璃材质用到的暗色 token 改了取值；右侧栏服务的注册时刻比 0.1.7-rc.1 **更晚**（见下文「在右侧边栏打开子代理」）。
 
 **0.2.0-rc.1** 上实测面板渲染一致：父会话带 6 个目录子代理时，管理器列出全部 6 行及其目录标签、每行 `类型：可继续`、每行 `◫` 均可用；被挂载过的子会话，其已结束行显示空心绿环，并带该子代理自己的模型与用量数字——与同一份会话数据上的 **0.1.7-rc.1** 运行结果逐行一致；两版上点击 `◫` 都能把该子代理打开为右侧栏标签页。
 
 **0.1.5-rc.3** 上实测无降级：全新实例 + 一个运行中子代理时，管理器在实时会话上正常打开，行显示目录标签、`类型：可继续`、具体模型 id、`◫`、暂停/隐藏/删除、渲染该子代理正在运行的 `bash` 工具的实时输出区，以及用量数字——控制台没有来自本插件的错误。
+
+**0.1.7-rc.2** 同样无需适配；它暴露出此前兼容矩阵的一处**漏检**：stock `ui-subagent` 注册的是**两个** header 单元，而不是一个。除了 `conversation.session.header.lineage` 的 lineage 下拉，**0.1.7-rc.1** 还在 `conversation.session.header.actions` 里新增了第二个注册（`id: "subagent-catalog"`、`order: -30`），只要当前会话的 `subagentCatalog` 投影已加载，它就渲染官方的「N 个子智能体」计数下拉。该槽是 `list` 槽、cell 按 `id` 划分，管理器自己的 `subagent-workspace-manager` cell 与它从不相争，因此两个入口会并存——本插件现在也遮蔽这个 cell（`priority: -1`，渲染 `null`），与遮蔽 lineage 槽完全同形；若未来宿主在同一 cell 占用同一优先级，两处遮蔽都会降级为「官方入口可见」而不会让插件失效。已在 **0.1.7-rc.1**、**0.1.7-rc.2** 与 **0.2.0-rc.1** 上用同一份「父会话 + 6 个子代理」数据实测：header 只剩 `🧩 Subagents 0/6`，面板仍列出 6 行，行上的 `◫` 仍能把该子代理打开为官方 `subagentchat` 右侧栏标签页。而在 **0.1.5-rc.3** 与 **0.1.6-alpha.2** 上——它们的 stock 包**没有**这个注册——多出的遮蔽 cell 不会在 header 里产生任何元素，也不抛错。
 
 ### 打开子代理会话的三级能力探测
 
