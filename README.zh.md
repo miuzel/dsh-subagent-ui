@@ -2,13 +2,8 @@
 
 [English](README.md) | **中文**
 
-![DSH 子代理工作区管理器 —— 子代理管理器与实时浮窗](docs/banner.png)
-
-<center>
-
-[![npm 版本](https://img.shields.io/npm/v/dsh-subagent-workspace-ui?label=npm&color=cb3837)](https://www.npmjs.com/package/dsh-subagent-workspace-ui) [![npm 下载量](https://img.shields.io/npm/dm/dsh-subagent-workspace-ui?label=downloads&color=blue)](https://www.npmjs.com/package/dsh-subagent-workspace-ui) [![许可证](https://img.shields.io/npm/l/dsh-subagent-workspace-ui?label=license&color=green)](LICENSE) [![已收录于 awesome-dsh-plugin（聚合索引，非官方 curated 列表）](https://img.shields.io/badge/awesome--dsh--plugin-listed-blue)](https://awesome-dsh-plugin.com/)
-
-</center>
+<p align="center"> <img src="https://raw.githubusercontent.com/miuzel/dsh-subagent-ui/main/docs/banner.png" alt="DSH 子代理工作区管理器 —— 子代理管理器与实时浮窗" width="100%"> </p>
+<p align="center"> <a href="https://www.npmjs.com/package/dsh-subagent-workspace-ui"><img src="https://img.shields.io/npm/v/dsh-subagent-workspace-ui?style=flat-square&label=npm&color=cb3837" alt="npm 版本"></a> <a href="https://www.npmjs.com/package/dsh-subagent-workspace-ui"><img src="https://img.shields.io/npm/dm/dsh-subagent-workspace-ui?style=flat-square&label=downloads&color=cb3837" alt="npm 下载量"></a> <a href="LICENSE"><img src="https://img.shields.io/npm/l/dsh-subagent-workspace-ui?style=flat-square&label=license&color=green" alt="许可证"></a> <a href="https://awesome-dsh-plugin.com"><img src="https://img.shields.io/badge/awesome--dsh--plugin-listed-2f6feb?style=flat-square" alt="已收录于 awesome-dsh-plugin（聚合索引，非官方 curated 列表）"></a> </p>
 
 面向 DeepSeek Harness Web 的子代理管理插件。插件在会话标题栏提供一个紧凑的 `🧩 子代理 active/total` 入口，用于搜索、筛选、分组、排序、查看和批量归档当前运行时已发现的子代理。
 

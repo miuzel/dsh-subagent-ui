@@ -2,13 +2,8 @@
 
 **English** | [中文](README.zh.md)
 
-![DSH Subagent Workspace UI — a subagent manager panel with a live floating panel](docs/banner.png)
-
-<center>
-
-[![npm version](https://img.shields.io/npm/v/dsh-subagent-workspace-ui?label=npm&color=cb3837)](https://www.npmjs.com/package/dsh-subagent-workspace-ui) [![npm downloads](https://img.shields.io/npm/dm/dsh-subagent-workspace-ui?label=downloads&color=blue)](https://www.npmjs.com/package/dsh-subagent-workspace-ui) [![license](https://img.shields.io/npm/l/dsh-subagent-workspace-ui?label=license&color=green)](LICENSE) [![listed in awesome-dsh-plugin (an aggregated index, not an official curated list)](https://img.shields.io/badge/awesome--dsh--plugin-listed-blue)](https://awesome-dsh-plugin.com/)
-
-</center>
+<p align="center"> <img src="https://raw.githubusercontent.com/miuzel/dsh-subagent-ui/main/docs/banner.png" alt="DSH Subagent Workspace UI —— a subagent manager panel with a live floating panel" width="100%"> </p>
+<p align="center"> <a href="https://www.npmjs.com/package/dsh-subagent-workspace-ui"><img src="https://img.shields.io/npm/v/dsh-subagent-workspace-ui?style=flat-square&label=npm&color=cb3837" alt="npm version"></a> <a href="https://www.npmjs.com/package/dsh-subagent-workspace-ui"><img src="https://img.shields.io/npm/dm/dsh-subagent-workspace-ui?style=flat-square&label=downloads&color=cb3837" alt="npm downloads"></a> <a href="LICENSE"><img src="https://img.shields.io/npm/l/dsh-subagent-workspace-ui?style=flat-square&label=license&color=green" alt="license"></a> <a href="https://awesome-dsh-plugin.com"><img src="https://img.shields.io/badge/awesome--dsh--plugin-listed-2f6feb?style=flat-square" alt="listed in awesome-dsh-plugin (an aggregated index, not an official curated list)"></a> </p>
 
 A Web client plugin that adds a **子代理管理** button to the conversation-header action row. It opens a searchable panel for the subagents currently discovered by the DSH client runtime.
 
