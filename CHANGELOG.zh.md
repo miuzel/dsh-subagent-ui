@@ -2,6 +2,14 @@
 
 `dsh-subagent-workspace-ui` 的全部版本变更记录，最新在前。本文件承接 README 迁出的完整历史（回溯至 v1.0.1）；英文版见 [`CHANGELOG.md`](https://github.com/miuzel/dsh-subagent-ui/blob/HEAD/CHANGELOG.md)（英文条目自 v1.3.2 起）。
 
+## v1.9.1
+
+- **修复：官方 `subagent-catalog` 计数入口也会出现在标题栏**。官方 `ui-subagent` 在标题栏注册的其实是**两个**入口、而非一个：血统下拉，以及自 dsh **0.1.7-rc.1** 起在 `conversation.session.header.actions` 注册的第二个 header 入口（`id: "subagent-catalog"`、`order: -30`、无 priority）——当前会话的 `subagentCatalog` 投影一加载完，它就画出官方的「N 个子代理」计数下拉。此前只遮蔽了血统槽，于是管理器入口与它并排出现。该槽是 `list` 槽、cell 以 `id` 为键，本插件自己的 `subagent-workspace-manager` cell 与它从不竞争；现以 `priority: -1` 复用同一个 `id` 注册一个渲染 `null` 的单元，**只夺走那一个 cell**——管理器自己的 cell、官方插件另外四处注册（含 `subagentchat` 右侧栏标签页）以及六行面板均不受影响。两处遮蔽统一走新的 `registerShadow`（try/catch → `console.warn` + no-op disposer）：`slots.inject` 里的同步异常会把整个 `apply` 带崩，因此宿主将来若在同 `(id, priority)` 上放出自己的入口，只损失该遮蔽、而不会让插件崩。**全程不判断任何版本号。**
+- **文档**：记录 dsh **0.2.0-rc.1** 的兼容性结论（逐包与 0.1.7-rc.1 对比，六个面逐一核对、均无破坏、无需适配）；两版 README 补上顶栏（徽章行随后并作单行）、生成的 2048×768 banner 与纯 npm 安装小节，并把发布说明迁入 `CHANGELOG.md` / `CHANGELOG.zh.md`；`cordis.patch.yml` 的 profile 注释同步点名两处遮蔽；`AGENTS.md` 记录两条客户端 gotcha（终态判定的代际边界、manager 行的字符级合并热点）。另记录一处**漏检**：官方的 `subagent-catalog` 入口自 **0.1.7-rc.1** 起就已存在（0.1.5-rc.3 与 0.1.6-alpha.2 没有该 cell），此前的兼容矩阵把该版本 header 记为「正常」，只是因为当时只看了 `lineage` 槽——它不是 0.1.7-rc.2 的回归。
+- **兼容性**：本版窗口内唯一的代码改动就是上述遮蔽注册（`src/client/apply.ts` 与据此重新生成的 `lib/client.js`），其余均为文档与版本号；全部为纯能力探测、**从不比较版本号**。
+
+已在 dsh **0.1.7-rc.2** / **0.1.7-rc.1** / **0.2.0-rc.1** 上真机验证：同一个六子代理会话里，修复后标题栏的官方入口为 `stock=0`、只剩本插件自己的入口，且管理器自己的 cell 仍在正常渲染；**0.1.5-rc.3** 与 **0.1.6-alpha.2** 上控制组与实验组同形（这两台本就没有该注册，actions 槽逐字节一致）。`pnpm run check` 全绿（bundle 新鲜度一致，102454 字节）。
+
 ## v1.9.0
 
 - **特性：在管理器中让已结束的子代理继续运行**。行的操作区（`⏸ 暂停` / `⊘ 隐藏` / `🗑 删除` 一组）新增“▶ 继续”，点击后向该子代理发送一条**本地化**的继续指令（中文界面「继续」、英文界面 “continue”），让它接着跑。实现是纯能力探测、**从不比较版本号**：有 `retain` 的宿主（0.1.6-alpha.2 起，含 0.1.7-rc.1）走 `sessions.retain(...)` → `binding.session.prompt([{ type: 'text', text: '继续' }], 'queue')`（英文界面传入 `'continue'`），**0.1.5-rc.3** 没有 `retain`，走借用 `sessions.binding` 得到的同一个 face，同样可用。宿主没有该能力时**按钮不渲染**；运行中与一次性子代理的行也不显示该按钮；管理器面板本身就在父会话 header 里，因此“父会话 agent 必须存活”在正常使用下天然满足（父会话不可用时只在控制台告警，不会变成未捕获的异常）。
