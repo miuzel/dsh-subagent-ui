@@ -4,11 +4,16 @@
       name: 'dsh-subagent-workspace-ui'
 
 # The stock ui-subagent plugin is deliberately left ENABLED: the manager reuses
-# its right-sidebar chat tab for the new "open in the sidebar" button. Its
-# session-header lineage dropdown is hidden instead by this plugin's own client
-# bundle, which registers a title-only cell at priority -1 in
-# conversation.session.header.lineage (a `single` slot renders its lowest
-# priority winner, so -1 shadows the stock registration without throwing).
-# Removing this package removes that registration with it, and this file no
+# its right-sidebar chat tab for the new "open in the sidebar" button. Its two
+# session-header subagent entries are hidden instead by this plugin's own client
+# bundle, which shadows each slot at a lower priority than the stock default 0:
+# a title-only cell at priority -1 in conversation.session.header.lineage (a
+# `single` slot renders its lowest priority winner), and a null cell at
+# priority -1 in conversation.session.header.actions under the stock
+# `subagent-catalog` id (that slot gives every id its own cell, so only the one
+# stock cell is taken and the manager keeps its own). Each shadow swallows its
+# own registration error, so a future host that ships a rival entry at the same
+# (id, priority) pair costs the shadow, not the plugin.
+# Removing this package removes those registrations with it, and this file no
 # longer touches ui-subagent at all — a manual ui-subagent stanza a user wrote in
 # the profile patch is intentionally preserved and keeps working.
