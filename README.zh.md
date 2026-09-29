@@ -287,7 +287,11 @@ ctx.sessions.list.getSnapshot().byId[childId].projectionValues.modelSelection
 
 ## 兼容性
 
-v1.8.0 及以后版本支持 dsh **0.1.5-rc.3**、**0.1.6-alpha.2** 与 **0.1.7-rc.1**，并对所有 DeepSeek Harness 版本保持向后兼容。这些宿主分属两代接口——0.1.5-rc.3 与 0.1.6-alpha.2 仍发布 `subagentsByParent`、`refreshSubagents` 与 `setSubagentCatalogOpen`，而 0.1.7-rc.1 删除了 `sessions.setSubagentCatalogOpen`、把 `refreshSubagents(parentSessionId)` 改名为 `refreshProjections(sessionId)`、并把 `SessionListState.subagentsByParent` 换成父会话自身的 `subagentCatalog` 投影。插件对每一项都做能力探测，因此两代宿主各自走可用路径，**从不比较版本号**。
+v1.8.0 及以后版本支持 dsh **0.1.5-rc.3**、**0.1.6-alpha.2**、**0.1.7-rc.1** 与 **0.2.0-rc.1**，并对所有 DeepSeek Harness 版本保持向后兼容。这些宿主分属两代接口——0.1.5-rc.3 与 0.1.6-alpha.2 仍发布 `subagentsByParent`、`refreshSubagents` 与 `setSubagentCatalogOpen`，而 0.1.7-rc.1 删除了 `sessions.setSubagentCatalogOpen`、把 `refreshSubagents(parentSessionId)` 改名为 `refreshProjections(sessionId)`、并把 `SessionListState.subagentsByParent` 换成父会话自身的 `subagentCatalog` 投影。插件对每一项都做能力探测，因此两代宿主各自走可用路径，**从不比较版本号**。
+
+**0.2.0-rc.1** 用同一套方法核对——以 **0.1.7-rc.1** 为基线逐包比对（23 个宿主包，外加 CLI、app-boot 与 web 前端），**不把 release note 当接口变更清单**——结论同样是**无需适配**：本插件读取的宿主面没有任何结构性变化。它注册的两个 slot 声明、模块加载壳及其种子 `require` 键、`subagentCatalog` / `subagent` / `subagentTiming` 三个投影（含世代性字段 `lastTurnCompleted`）、`subagentAddress` / `openResource` / `candidates`、`dsh plugin --profile web add` 流程，以及本插件用到的全部 21 个 `--dsw-*` token，都未变或仅纯增量；契约上唯一的新增是可选参数 `fork(onCreated)`（本插件不调用），而宿主 web graph 移除 `ui-schedule` 行既不触及本插件，也不影响它的 slot 屏蔽。两处差异可见但不构成破坏：面板与浮窗玻璃材质用到的暗色 token 改了取值；右侧栏服务的注册时刻比 0.1.7-rc.1 **更晚**（见下文「在右侧边栏打开子代理」）。
+
+**0.2.0-rc.1** 上实测面板渲染一致：父会话带 6 个目录子代理时，管理器列出全部 6 行及其目录标签、每行 `类型：可继续`、每行 `◫` 均可用；被挂载过的子会话，其已结束行显示空心绿环，并带该子代理自己的模型与用量数字——与同一份会话数据上的 **0.1.7-rc.1** 运行结果逐行一致；两版上点击 `◫` 都能把该子代理打开为右侧栏标签页。
 
 **0.1.5-rc.3** 上实测无降级：全新实例 + 一个运行中子代理时，管理器在实时会话上正常打开，行显示目录标签、`类型：可继续`、具体模型 id、`◫`、暂停/隐藏/删除、渲染该子代理正在运行的 `bash` 工具的实时输出区，以及用量数字——控制台没有来自本插件的错误。
 
@@ -322,7 +326,7 @@ ctx.sessions.subagentAddress → 是函数（按行取地址）
 # 验证为空 → 该行按钮渲染为禁用态并给出可读说明，绝不抛异常给用户。
 ```
 
-两个能力面**按行、按次解析，绝不在激活时只探测一次**：dsh **0.1.7-rc.1** 在本插件 `apply` **之后**才注册 `sidebarRight`/`sidebarRightTabs`（**0.1.6-alpha.2** 在 `apply` 时已就绪），因此激活时的一次性探测会让新宿主上的整列 `◫` 消失，而旧宿主毫无异样。
+两个能力面**按行、按次解析，绝不在激活时只探测一次**：dsh **0.1.7-rc.1** 在本插件 `apply` **之后**才注册 `sidebarRight`/`sidebarRightTabs`（**0.1.6-alpha.2** 在 `apply` 时已就绪），因此激活时的一次性探测会让新宿主上的整列 `◫` 消失，而旧宿主毫无异样。dsh **0.2.0-rc.1** 把这个窗口推得更晚：它的 `ui-sidebar-right` 现在还要注入 `shortcuts`，即发布这两个能力面之前要多等一个服务。正是「按行、按次解析」让 `◫` 列在这些宿主上都能正常渲染。
 
 要点：
 
