@@ -4,7 +4,11 @@
 
 ![DSH Subagent Workspace UI — a subagent manager panel with a live floating panel](docs/banner.png)
 
+<center>
+
 [![npm version](https://img.shields.io/npm/v/dsh-subagent-workspace-ui?label=npm&color=cb3837)](https://www.npmjs.com/package/dsh-subagent-workspace-ui) [![npm downloads](https://img.shields.io/npm/dm/dsh-subagent-workspace-ui?label=downloads&color=blue)](https://www.npmjs.com/package/dsh-subagent-workspace-ui) [![license](https://img.shields.io/npm/l/dsh-subagent-workspace-ui?label=license&color=green)](LICENSE) [![listed in awesome-dsh-plugin (an aggregated index, not an official curated list)](https://img.shields.io/badge/awesome--dsh--plugin-listed-blue)](https://awesome-dsh-plugin.com/)
+
+</center>
 
 A Web client plugin that adds a **子代理管理** button to the conversation-header action row. It opens a searchable panel for the subagents currently discovered by the DSH client runtime.
 
