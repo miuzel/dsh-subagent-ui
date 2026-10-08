@@ -25,10 +25,12 @@ const MODULES = [
   'retain',       // RETAIN_SOURCE/RETAIN_LIMIT, retainDeclare/retainClear, liveBindingFor
   'live-output',  // LiveOutput
   'detail',       // elapsed, compactPath, toolDetail
+  'markdown',     // prompt markdown -> DOM (PROMPT_* constants, promptBodyInto)
   'live-events',  // liveFromEvents
   'active-float', // ActiveFloat
   'manager',      // Manager
   'i18n',         // NS, zh, en
+  'prompt-view',  // promptMessagesFromWindow, promptPreviewAttach, PromptPreview
   'apply',        // apply
 ]
 

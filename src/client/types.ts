@@ -255,10 +255,17 @@ export interface EventMessage {
 
 export interface SessionEvent {
   type: string
+  /* Durability facts the conversation layer needs to pick surface nodes. */
+  seq?: number
+  /* `'append'` marks the transcript tail; a replacement copy is model-only. */
+  surfaceOp?: string
   data?: {
     chunk?: StreamChunk
     source?: EventSource
     message?: EventMessage
+    /* A durable `user/message` carries the blocks directly on its data. */
+    content?: readonly ContentBlock[]
+    id?: string
     callId?: string
     name?: string
     arguments?: string
@@ -522,6 +529,26 @@ export interface ManagerProps {
   /* Right-sidebar capability: both are absent when the host exposes no such face. */
   asideAddressOf?: ((row: SubagentRow) => string | null | undefined) | null
   openAside?: ((address: string) => boolean) | null
+}
+
+/**
+ * One durable `user/message` of a subagent conversation, reduced to what the
+ * prompt preview needs. `seq` is the event sequence the conversation node key
+ * is built from (`<seq>:input-message<id>`), so it is the alignment key.
+ */
+export interface PromptMessage {
+  seq: number | null
+  id: string
+  kind: string
+  text: string
+  /* False when the message carries a block other than text (an image, say). */
+  textOnly: boolean
+}
+
+/** Props of the headless host that injects the preview into the chat flow. */
+export interface PromptPreviewProps {
+  t: Tr
+  sessionId?: string
 }
 
 /** The plugin context handed to apply() by the DSH client runtime. */

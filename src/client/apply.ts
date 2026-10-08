@@ -1,5 +1,6 @@
 import { NS, zh, en } from './i18n'
 import { Manager } from './manager'
+import { PromptPreview } from './prompt-view'
 import { retainReleaseAll } from './retain'
 import type { LineageShadowProps, PluginCtx, UiWorkspaceRuntime } from './types'
 // Navigation capability probe. Order matters: sessions.openSubagent(address) is
@@ -113,6 +114,12 @@ export function apply(ctx:PluginCtx){
     },
     face=()=>({...actions,asideAddressOf,openAside})
   ctx.slots.inject('conversation.session.header.actions',()=>ctx.slots.register({name:'conversation.session.header.actions',id:'subagent-workspace-manager',order:100,locale:NS,inject:face},Manager))
+  // g-023 prompt preview. A second, headless cell in the same list slot: the
+  // component renders one hidden anchor and drives DOM injection into the chat
+  // flow of the conversation it belongs to (see prompt-view.ts). A list cell of
+  // its own keeps the official `conversation.chat.node` renderer untouched, and
+  // the cell is inert on any host that renders no user nodes.
+  ctx.slots.inject('conversation.session.header.actions',()=>ctx.slots.register({name:'conversation.session.header.actions',id:'subagent-prompt-preview',order:101,locale:NS},PromptPreview))
   registerShadow(ctx,'conversation.session.header.actions',{name:'conversation.session.header.actions',id:'subagent-catalog',priority:-1},CatalogShadow)
   registerShadow(ctx,'conversation.session.header.lineage',{name:'conversation.session.header.lineage',priority:-1},LineageShadow)
 }
