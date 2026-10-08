@@ -219,8 +219,9 @@ const promptTextOf = (el: Element) => {
   return out
 }
 
-const promptLongestLeafText = (root: Element) => {
-  let best = ''
+const promptLongestLeafNode = (root: Element) => {
+  let best: Element | null = null
+  let bestLength = 0
   const visit = (node: Node) => {
     if (!(node instanceof Element)) return
     if (promptChromeNode(node)) return
@@ -229,8 +230,11 @@ const promptLongestLeafText = (root: Element) => {
       if (!promptChromeNode(child)) branch = true
     }
     if (!branch) {
-      const text = promptTextOf(node)
-      if (text.trim().length > best.trim().length) best = text
+      const length = promptTextOf(node).trim().length
+      if (length > bestLength) {
+        bestLength = length
+        best = node
+      }
       return
     }
     for (const child of Array.from(node.children)) visit(child)
@@ -239,13 +243,60 @@ const promptLongestLeafText = (root: Element) => {
   return best
 }
 
+// The lowest element that still contains every marked body fragment: its own
+// chrome-free text is the body in document order, so unmarked neighbours between
+// marked fragments are kept instead of being dropped.
+const promptCommonAncestor = (els: Element[]) => {
+  let region: Element | null = els.length ? els[0].parentElement : null
+  while (region) {
+    let covers = true
+    for (const el of els) {
+      if (el !== region && !region.contains(el)) {
+        covers = false
+        break
+      }
+    }
+    if (covers) return region
+    region = region.parentElement
+  }
+  return null
+}
+
+// The whole body of one message node, never a single fragment of it: every
+// marked fragment is merged in document order, and a node with no marker at all
+// (0.2.0-rc.2 renders a plain user message as one bare span) is read through the
+// container its longest run of text lives in, so sibling fragments stay merged.
+// Chrome (timestamps, buttons, the card title, the action row) is dropped by the
+// walk, never by `textContent`.
 const promptOfficialText = (node: Element) => {
+  const marked: Element[] = []
   for (const el of Array.from(node.querySelectorAll(PROMPT_BODY_SELECTOR))) {
     if (promptIsOurs(el)) continue
-    const text = el.textContent || ''
-    if (text.trim()) return text
+    if ((el.textContent || '').trim()) marked.push(el)
   }
-  return promptLongestLeafText(node)
+  if (marked.length) {
+    const region = promptCommonAncestor(marked)
+    if (region && region !== node) {
+      const merged = promptTextOf(region)
+      if (merged.trim()) return merged
+    }
+    const parts: string[] = []
+    for (const el of marked) {
+      const part = promptTextOf(el)
+      if (part.trim()) parts.push(part)
+    }
+    return parts.join('\n\n')
+  }
+  const leaf = promptLongestLeafNode(node)
+  if (leaf) {
+    const parent = leaf.parentElement
+    if (parent && parent !== node && !promptChromeNode(parent)) {
+      const outer = promptTextOf(parent)
+      if (outer.trim().length >= promptTextOf(leaf).trim().length) return outer
+    }
+    return promptTextOf(leaf)
+  }
+  return promptTextOf(node)
 }
 
 const promptIsOurs = (el: Element) => el.hasAttribute(PROMPT_BLOCK_ATTR) || el.hasAttribute(PROMPT_TRIGGER_ATTR)
@@ -581,8 +632,26 @@ export const promptPreviewAttach = (anchor: Element, propSessionId: string, tran
     }
     const used = new Set<PromptMessage>()
     const nodes = Array.from(container.querySelectorAll(PROMPT_NODE_SELECTOR))
-    const mapped: (PromptMessage | null)[] = nodes.map(node => {
+    // A node key is `<anchor>:<definitionKind><messageId>` and only the id half
+    // is an identity: the anchor half is the feed's own position, not
+    // `event.seq`. A user message whose turn also injected context events has
+    // been measured at anchor 13 while its own record sits at seq 9, and looking
+    // the anchor up first attached the seq-13 `time-context` injection to the
+    // user's node. So the id is consulted first, and the anchor is only the
+    // fallback for nodes whose key carries no id (a bare turn card).
+    const addressed = new Set<number>()
+    const mapped: (PromptMessage | null)[] = nodes.map((node, index) => {
       const key = promptNodeKey(node)
+      const id = promptIdOfKey(key)
+      if (id) {
+        addressed.add(index)
+        const hit = byId.get(id)
+        if (hit && !used.has(hit)) {
+          used.add(hit)
+          return hit
+        }
+        return null
+      }
       const seq = promptSeqOfKey(key)
       if (seq !== null) {
         const hit = bySeq.get(seq)
@@ -591,21 +660,15 @@ export const promptPreviewAttach = (anchor: Element, propSessionId: string, tran
           return hit
         }
       }
-      const id = promptIdOfKey(key)
-      if (id) {
-        const hit = byId.get(id)
-        if (hit && !used.has(hit)) {
-          used.add(hit)
-          return hit
-        }
-      }
       return null
     })
-    // Positional fill for whatever the key could not address. A bounded window
-    // is a tail page, so unmatched nodes are the older ones: align both ends.
+    // Positional fill for whatever the key could not address at all. A bounded
+    // window is a tail page, so unmatched nodes are the older ones: align both
+    // ends. An addressable node whose record is missing is the out-of-window
+    // case and must keep its own DOM body instead of borrowing a neighbour's.
     const freeNodes: number[] = []
     mapped.forEach((hit, index) => {
-      if (!hit) freeNodes.push(index)
+      if (!hit && !addressed.has(index)) freeNodes.push(index)
     })
     const freeMessages = records.filter(message => !used.has(message))
     if (freeMessages.length && freeNodes.length) {
