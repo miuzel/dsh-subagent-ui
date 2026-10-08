@@ -190,6 +190,42 @@ const promptContainerFor = (anchor: Element | null, sessionId: string) => {
   return all.length === 1 ? all[0] : null
 }
 
+// The block's own scrollport, found by capability and never by host attribute:
+// the nearest ancestor that actually scrolls, then the document scroller for a
+// host whose conversation is not the scrolling element. A conversation that fits
+// its viewport has no scroller at all, which is exactly when nothing should move.
+const promptScrollerFor = (el: Element) => {
+  let node = el.parentElement
+  let hops = 0
+  while (node && hops < PROMPT_MAX_ANCHOR_HOPS) {
+    const overflow = window.getComputedStyle(node).overflowY
+    const scrolls = overflow === 'auto' || overflow === 'scroll' || overflow === 'overlay'
+    if (scrolls && node.scrollHeight > node.clientHeight + 1) return node
+    node = node.parentElement
+    hops += 1
+  }
+  const doc = document.scrollingElement
+  if (doc && doc.scrollHeight > doc.clientHeight + 1) return doc
+  return null
+}
+
+// Showing the preview can leave it outside the viewport: the official body it
+// replaces is the whole message, while the block starts folded, so the block's
+// top can end up far above the reader's position. Bring that top back into view
+// and nothing else: an already visible top is never scrolled (no jump), the fold
+// state is never touched, and the alignment is the top edge, never the bottom.
+const promptRevealBlock = (block: Element | null) => {
+  if (!block) return
+  if (block.getAttribute('data-dsh-sam-prompt-state') !== PROMPT_MODE_RENDERED) return
+  const scroller = promptScrollerFor(block)
+  if (!scroller) return
+  const box = block.getBoundingClientRect()
+  if (!box.width && !box.height) return
+  const frame = scroller.getBoundingClientRect()
+  if (box.top >= frame.top && box.top <= frame.bottom) return
+  scroller.scrollTop += box.top - frame.top
+}
+
 // Text of the official rendering only: our own elements are skipped. A card body
 // carries the host's own mark; a plain user bubble has none, so its longest
 // chrome-free leaf stands in for it. The node's concatenated text is never used,
@@ -362,6 +398,7 @@ const promptTriggerFor = (key: string, node: Element, tr: Tr) => {
     event.preventDefault()
     event.stopPropagation()
     promptSetMode(key, PROMPT_MODE_RENDERED, tr)
+    promptRevealBlock(node.querySelector('[data-dsh-sam-prompt-block]'))
   })
   const anchor = promptActionAnchor(node)
   const rowChild = anchor ? promptRowChild(node, anchor) : null
@@ -454,6 +491,7 @@ const promptBlockFor = (spec: PromptBlockSpec) => {
       event.preventDefault()
       event.stopPropagation()
       promptSetMode(spec.key, mode.getAttribute('data-dsh-sam-prompt-mode') || PROMPT_MODE_RENDERED, spec.tr)
+      promptRevealBlock(wrapper)
       return
     }
     if (target.closest('[data-dsh-sam-prompt-fold]')) {
