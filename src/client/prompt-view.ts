@@ -40,6 +40,18 @@ export const PROMPT_HIDE_CLASS = 'dsh-sam-prompt-hide'
 // A turn card is also a paging anchor, so its own element is never hidden.
 const PROMPT_NODE_SELECTOR = '[data-chat-flow-kind="user"], [data-chat-flow-kind="turn-trigger"]'
 const promptNodeIsCard = (node: Element) => node.getAttribute('data-chat-flow-kind') === 'turn-trigger'
+/* The compact re-open button that lives inside the official action row. */
+export const PROMPT_TRIGGER_ATTR = 'data-dsh-sam-prompt-trigger'
+const PROMPT_TRIGGER_CLASS = 'dsh-sam-prompt-trigger'
+const PROMPT_TRIGGER_ON_CLASS = 'dsh-sam-prompt-trigger-on'
+const PROMPT_BLOCK_HIDDEN_CLASS = 'dsh-sam-prompt-block-hidden'
+// The official copy affordance is matched by its localized label (zh + en, and
+// its `copied` form for the second after a click) and its action row by the
+// locale-independent `data-clock` marker; the row's own class names are
+// per-build hashes and are never used.
+const PROMPT_COPY_TEXT = /复制|cop(y|ied)/i
+const PROMPT_ROW_SELECTOR = '[data-clock]'
+const PROMPT_OFFICIAL_SELECTOR = '[data-slot="conversation.chat.node"]'
 /* How many ancestors to walk looking for the owning scrollport. */
 const PROMPT_MAX_ANCHOR_HOPS = 12
 /* Debounce for the mutation/feed driven resync (a streaming turn mutates a lot). */
@@ -176,6 +188,83 @@ const promptOfficialText = (node: Element) => {
   return text
 }
 
+const promptIsOurs = (el: Element) => el.hasAttribute(PROMPT_BLOCK_ATTR) || el.hasAttribute(PROMPT_TRIGGER_ATTR)
+
+const promptButtonLabel = (button: Element) => String(button.getAttribute('aria-label') || '') + ' ' + String(button.getAttribute('title') || '')
+
+// The official copy button of one message, or null when the host renders no
+// action row at all (an older turn card, a host without the row).
+const promptCopyButton = (node: Element) => {
+  const buttons = Array.from(node.querySelectorAll('button')).filter(button => !promptIsOurs(button))
+  for (const button of buttons) {
+    if (PROMPT_COPY_TEXT.test(promptButtonLabel(button))) return button
+  }
+  return null
+}
+
+// Where the compact trigger goes: right after the official copy button; inside
+// the same action row when only the row is recognizable; otherwise appended to
+// the official node itself so the position never depends on the state.
+const promptActionAnchor = (node: Element) => {
+  const copy = promptCopyButton(node)
+  if (copy) return copy
+  const row = node.querySelector(PROMPT_ROW_SELECTOR)
+  if (!row) return null
+  const buttons = Array.from(row.querySelectorAll('button')).filter(button => !promptIsOurs(button))
+  return buttons.length ? buttons[buttons.length - 1] : row
+}
+
+// Relabel one trigger; only the raw state shows it, so the button can never sit
+// next to a dead fold control.
+export const promptApplyTrigger = (trigger: Element, tr: Tr) => {
+  const key = trigger.getAttribute('data-dsh-sam-prompt-key') || ''
+  const state = promptMode.get(key) === PROMPT_MODE_RAW ? PROMPT_MODE_RAW : PROMPT_MODE_RENDERED
+  trigger.setAttribute('data-dsh-sam-prompt-state', state)
+  trigger.classList.toggle(PROMPT_TRIGGER_ON_CLASS, state === PROMPT_MODE_RAW)
+  const label = tr('prompt.previewAria')
+  if (trigger.textContent !== tr('prompt.preview')) trigger.textContent = tr('prompt.preview')
+  if (trigger.getAttribute('aria-label') !== label) trigger.setAttribute('aria-label', label)
+  if (trigger.getAttribute('title') !== label) trigger.setAttribute('title', label)
+}
+
+// The official row child that holds the copy affordance: the button may sit
+// inside a tooltip/skin wrapper, and the trigger must land next to that whole
+// group as a direct child of the action row, never inside the wrapper.
+const promptRowChild = (node: Element, el: Element) => {
+  const row = node.querySelector(PROMPT_ROW_SELECTOR)
+  if (!row) return null
+  let current: Element | null = el
+  while (current && current.parentElement && current.parentElement !== row) current = current.parentElement
+  if (!current || current.parentElement !== row) return null
+  return current
+}
+
+const promptTriggerFor = (key: string, node: Element, tr: Tr) => {
+  const trigger = document.createElement('button')
+  trigger.type = 'button'
+  trigger.className = PROMPT_TRIGGER_CLASS
+  trigger.setAttribute(PROMPT_TRIGGER_ATTR, '')
+  trigger.setAttribute('data-dsh-sam-prompt-key', key)
+  promptApplyTrigger(trigger, tr)
+  trigger.addEventListener('mousedown', event => event.stopPropagation())
+  trigger.addEventListener('click', event => {
+    event.preventDefault()
+    event.stopPropagation()
+    promptSetMode(key, PROMPT_MODE_RENDERED, tr)
+  })
+  const anchor = promptActionAnchor(node)
+  const rowChild = anchor ? promptRowChild(node, anchor) : null
+  if (rowChild) rowChild.after(trigger)
+  else if (anchor && anchor.tagName === 'BUTTON') anchor.after(trigger)
+  else if (anchor) anchor.appendChild(trigger)
+  else {
+    const official = node.querySelector(PROMPT_OFFICIAL_SELECTOR)
+    if (official) official.appendChild(trigger)
+    else node.appendChild(trigger)
+  }
+  return trigger
+}
+
 const promptBlockFor = (spec: PromptBlockSpec) => {
   const tr = spec.tr
   const wrapper = document.createElement('div')
@@ -188,18 +277,14 @@ const promptBlockFor = (spec: PromptBlockSpec) => {
   wrapper.setAttribute('data-dsh-sam-prompt-sig', promptBlockSignature(spec))
   const bar = document.createElement('div')
   bar.className = 'dsh-sam-prompt-bar'
-  const badge = document.createElement('span')
-  badge.className = 'dsh-sam-prompt-badge'
-  badge.textContent = tr('prompt.bar')
-  bar.appendChild(badge)
   if (!spec.text) {
     wrapper.setAttribute('data-dsh-sam-prompt-kind', 'notice')
     wrapper.setAttribute('data-dsh-sam-prompt-state', 'notice')
     const note = document.createElement('span')
     note.className = 'dsh-sam-prompt-notice'
     note.textContent = spec.notice || tr('prompt.unavailable')
-    bar.appendChild(note)
-    wrapper.appendChild(bar)
+    wrapper.appendChild(note)
+    promptApplyState(wrapper, spec.tr)
     return wrapper
   }
   if (spec.head) {
@@ -214,15 +299,15 @@ const promptBlockFor = (spec: PromptBlockSpec) => {
   wrapper.setAttribute('data-dsh-sam-prompt-foldable', foldable ? 'true' : 'false')
   /* Attachments live in the official node; there we never hide it. */
   wrapper.setAttribute('data-dsh-sam-prompt-hide-official', spec.textOnly ? 'true' : 'false')
-  for (const pair of [['rendered', tr('prompt.rendered')], ['raw', tr('prompt.raw')]]) {
-    const tab = document.createElement('button')
-    tab.type = 'button'
-    tab.className = 'dsh-sam-prompt-tab'
-    tab.setAttribute('data-dsh-sam-prompt-mode', pair[0])
-    tab.title = tr('prompt.toggleAria')
-    tab.textContent = pair[1]
-    bar.appendChild(tab)
-  }
+  // The toolbar only ever exists inside the rendered block, so switching back to
+  // the raw text removes it together with the block: nothing can jump or go dead.
+  const raw = document.createElement('button')
+  raw.type = 'button'
+  raw.className = 'dsh-sam-prompt-tab'
+  raw.setAttribute('data-dsh-sam-prompt-mode', PROMPT_MODE_RAW)
+  raw.title = tr('prompt.toggleAria')
+  raw.textContent = tr('prompt.raw')
+  bar.appendChild(raw)
   if (foldable) {
     const fold = document.createElement('button')
     fold.type = 'button'
@@ -238,7 +323,7 @@ const promptBlockFor = (spec: PromptBlockSpec) => {
     const cut = document.createElement('span')
     cut.className = 'dsh-sam-prompt-cut'
     cut.textContent = tr('prompt.truncated', { shown: String(PROMPT_RENDER_MAX_CHARS), total: String(spec.text.length) })
-    bar.appendChild(cut)
+    wrapper.appendChild(cut)
   }
   wrapper.appendChild(bar)
   wrapper.appendChild(body)
@@ -271,14 +356,16 @@ export const promptBlockSignature = (spec: PromptBlockSpec) => {
   return [kind, spec.source, spec.text.length, text, spec.textOnly ? 't' : 'm', spec.notice, spec.head, spec.tr('prompt.raw')].join('|')
 }
 
-// Apply one node's state to one block: body visibility, official-node
-// visibility, the pressed tab and the fold label. Pure DOM, no React state.
+// Apply one node's state to one block: block visibility, official-node
+// visibility, the fold label and the in-block toolbar labels. Pure DOM, no React
+// state. Only the rendered state keeps the block on screen, so the raw state can
+// never show a toolbar whose fold control has nothing left to fold.
 export const promptApplyState = (block: Element, tr: Tr) => {
   const key = block.getAttribute('data-dsh-sam-prompt-key') || ''
-  if (block.getAttribute('data-dsh-sam-prompt-kind') !== 'preview') return
   const state = promptMode.get(key) === PROMPT_MODE_RAW ? PROMPT_MODE_RAW : PROMPT_MODE_RENDERED
   const rendered = state === PROMPT_MODE_RENDERED
   block.setAttribute('data-dsh-sam-prompt-state', state)
+  block.classList.toggle(PROMPT_BLOCK_HIDDEN_CLASS, !rendered)
   const body = block.querySelector('[data-dsh-sam-prompt-body]')
   if (body) {
     const foldable = block.getAttribute('data-dsh-sam-prompt-foldable') === 'true'
@@ -288,27 +375,32 @@ export const promptApplyState = (block: Element, tr: Tr) => {
     const fold = block.querySelector('[data-dsh-sam-prompt-fold]')
     if (fold) fold.textContent = folded ? tr('prompt.expand') : tr('prompt.collapse')
   }
-  for (const tab of Array.from(block.querySelectorAll('[data-dsh-sam-prompt-mode]'))) {
-    const on = tab.getAttribute('data-dsh-sam-prompt-mode') === state
-    tab.classList.toggle('dsh-sam-prompt-tab-on', on)
-    tab.setAttribute('aria-pressed', on ? 'true' : 'false')
-  }
+  const tab = block.querySelector('[data-dsh-sam-prompt-mode="' + PROMPT_MODE_RAW + '"]')
+  if (tab) tab.textContent = tr('prompt.raw')
   const attachPoint = block.parentElement
   if (!attachPoint) return
   const hide = rendered && block.getAttribute('data-dsh-sam-prompt-hide-official') === 'true'
   for (const child of Array.from(attachPoint.children)) {
-    if (child === block || child.hasAttribute(PROMPT_BLOCK_ATTR)) continue
+    if (child === block || promptIsOurs(child)) continue
     child.classList.toggle(PROMPT_HIDE_CLASS, hide)
+  }
+  for (const trigger of Array.from(attachPoint.querySelectorAll('[' + PROMPT_TRIGGER_ATTR + ']'))) {
+    if (trigger.getAttribute('data-dsh-sam-prompt-key') === key) promptApplyTrigger(trigger, tr)
   }
 }
 
 // One key can be mounted twice (main pane and the stock sidebar chat tab), so a
-// state change is broadcast to every block carrying that key.
+// state change is broadcast to every block and every trigger carrying that key.
 export const promptRefreshKey = (key: string, tr: Tr) => {
   const blocks = document.querySelectorAll('[' + PROMPT_BLOCK_ATTR + ']')
   for (const block of Array.from(blocks)) {
     if (block.getAttribute('data-dsh-sam-prompt-key') !== key) continue
     promptApplyState(block, tr)
+  }
+  const triggers = document.querySelectorAll('[' + PROMPT_TRIGGER_ATTR + ']')
+  for (const trigger of Array.from(triggers)) {
+    if (trigger.getAttribute('data-dsh-sam-prompt-key') !== key) continue
+    promptApplyTrigger(trigger, tr)
   }
 }
 
@@ -345,6 +437,7 @@ export const promptPreviewRefresh = () => {
  */
 export const promptPreviewAttach = (anchor: Element, propSessionId: string, translate: () => Tr) => {
   const blocks = new Map<string, Element>()
+  const triggers = new Map<string, Element>()
   const hidden = new Set<Element>()
   let container: Element | null = null
   let feed: { subscribe?: (notify: () => void) => unknown } | null = null
@@ -371,6 +464,8 @@ export const promptPreviewAttach = (anchor: Element, propSessionId: string, tran
   const dropBlocks = () => {
     for (const block of Array.from(blocks.values())) if (block.parentNode) block.parentNode.removeChild(block)
     blocks.clear()
+    for (const trigger of Array.from(triggers.values())) if (trigger.parentNode) trigger.parentNode.removeChild(trigger)
+    triggers.clear()
   }
   const clearAll = () => {
     dropBlocks()
@@ -486,6 +581,11 @@ export const promptPreviewAttach = (anchor: Element, propSessionId: string, tran
       if (text) headPending = false
       const spec = { key, tr, text, source: sourceKind, textOnly, notice, head }
       const signature = promptBlockSignature(spec)
+      // The trigger is anchored to the official action row once and then only
+      // relabelled, so its position is byte-stable across every state change.
+      const trigger = triggers.get(key)
+      if (trigger && trigger.parentNode) promptApplyTrigger(trigger, tr)
+      else triggers.set(key, promptTriggerFor(key, node, tr))
       const existing = blocks.get(key)
       if (existing && existing.parentElement === node && existing.getAttribute('data-dsh-sam-prompt-sig') === signature) {
         promptApplyState(existing, tr)
@@ -505,6 +605,12 @@ export const promptPreviewAttach = (anchor: Element, propSessionId: string, tran
       if (block && block.parentNode) block.parentNode.removeChild(block)
       blocks.delete(key)
     }
+    for (const key of Array.from(triggers.keys())) {
+      if (seen.has(key)) continue
+      const trigger = triggers.get(key)
+      if (trigger && trigger.parentNode) trigger.parentNode.removeChild(trigger)
+      triggers.delete(key)
+    }
     // Apply every block's state once the block sits inside its node, so the
     // official sibling's visibility follows the current mode.
     for (const block of Array.from(blocks.values())) promptApplyState(block, tr)
@@ -519,7 +625,7 @@ export const promptPreviewAttach = (anchor: Element, propSessionId: string, tran
       const owner = block.parentElement
       if (!owner) continue
       for (const child of Array.from(owner.children)) {
-        if (child === block || child.hasAttribute(PROMPT_BLOCK_ATTR)) continue
+        if (child === block || promptIsOurs(child)) continue
         claimed.add(child)
       }
     }
