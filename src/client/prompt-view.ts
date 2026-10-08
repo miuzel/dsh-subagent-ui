@@ -44,6 +44,8 @@ const promptNodeIsCard = (node: Element) => node.getAttribute('data-chat-flow-ki
 export const PROMPT_TRIGGER_ATTR = 'data-dsh-sam-prompt-trigger'
 const PROMPT_TRIGGER_CLASS = 'dsh-sam-prompt-trigger'
 const PROMPT_TRIGGER_ON_CLASS = 'dsh-sam-prompt-trigger-on'
+/* A press activates the chip; the click that follows it is ignored this long. */
+const PROMPT_PRESS_GUARD_MS = 700
 const PROMPT_BLOCK_HIDDEN_CLASS = 'dsh-sam-prompt-block-hidden'
 // The official copy affordance is matched by its localized label (zh + en, and
 // its `copied` form for the second after a click) and its action row by the
@@ -226,6 +228,18 @@ const promptRevealBlock = (block: Element | null) => {
   scroller.scrollTop += box.top - frame.top
 }
 
+// One activation for both the press and the keyboard: show the preview, then
+// make sure its top is on screen.
+const promptActivateTrigger = (key: string, node: Element | null, tr: Tr) => {
+  promptSetMode(key, PROMPT_MODE_RENDERED, tr)
+  promptRevealBlock(node ? node.querySelector('[data-dsh-sam-prompt-block]') : null)
+}
+
+// A mouse press activates the chip and the `click` that follows it must not do
+// the same work a second time. Kept per key so chips for other messages stay
+// independent, and short enough never to swallow a deliberate second press.
+const promptTriggerPress = new Map<string, number>()
+
 // Text of the official rendering only: our own elements are skipped. A card body
 // carries the host's own mark; a plain user bubble has none, so its longest
 // chrome-free leaf stands in for it. The node's concatenated text is never used,
@@ -394,11 +408,28 @@ const promptTriggerFor = (key: string, node: Element, tr: Tr) => {
   trigger.setAttribute('data-dsh-sam-prompt-key', key)
   promptApplyTrigger(trigger, tr)
   trigger.addEventListener('mousedown', event => event.stopPropagation())
+  // The completed `click` is not a dependable activation here. The host rebuilds
+  // the official action row — and with it this chip's container — while a message
+  // streams or the feed re-renders, so the press and its release can land on two
+  // different elements; the browser then dispatches `click` on their common
+  // ancestor and this button never hears about it. The press itself always lands
+  // on whichever chip is under the pointer, so the activation is bound to
+  // `pointerdown`. The `click` handler stays for the keyboard, where Enter and
+  // Space fire no pointer event, and the guard keeps a mouse press from acting
+  // twice. The press is deliberately not swallowed: the row this chip is mounted
+  // in keeps its own pointer bookkeeping, and stopping the event there left the
+  // whole row inert on 0.1.7-rc.2 — measured, not guessed (an injected mouse
+  // press changed nothing while a keyboard Enter on the same chip rendered the
+  // block).
+  trigger.addEventListener('pointerdown', event => {
+    promptTriggerPress.set(key, Date.now())
+    promptActivateTrigger(key, node, tr)
+  })
   trigger.addEventListener('click', event => {
     event.preventDefault()
     event.stopPropagation()
-    promptSetMode(key, PROMPT_MODE_RENDERED, tr)
-    promptRevealBlock(node.querySelector('[data-dsh-sam-prompt-block]'))
+    if (Date.now() - (promptTriggerPress.get(key) || 0) < PROMPT_PRESS_GUARD_MS) return
+    promptActivateTrigger(key, node, tr)
   })
   const anchor = promptActionAnchor(node)
   const rowChild = anchor ? promptRowChild(node, anchor) : null
@@ -767,8 +798,11 @@ export const promptPreviewAttach = (anchor: Element, propSessionId: string, tran
       const signature = promptBlockSignature(spec)
       // The trigger is anchored to the official action row once and then only
       // relabelled, so its position is byte-stable across every state change.
+      // The chip is reused for as long as it is really in the document: a host
+      // re-render that drops its container is the only reason to build a new one,
+      // and replacing a live chip is what would lose a press mid-flight.
       const trigger = triggers.get(key)
-      if (trigger && trigger.parentNode) promptApplyTrigger(trigger, tr)
+      if (trigger && trigger.isConnected) promptApplyTrigger(trigger, tr)
       else triggers.set(key, promptTriggerFor(key, node, tr))
       const existing = blocks.get(key)
       if (existing && existing.parentElement === node && existing.getAttribute('data-dsh-sam-prompt-sig') === signature) {
