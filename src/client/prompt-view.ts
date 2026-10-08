@@ -52,6 +52,17 @@ const PROMPT_BLOCK_HIDDEN_CLASS = 'dsh-sam-prompt-block-hidden'
 const PROMPT_COPY_TEXT = /复制|cop(y|ied)/i
 const PROMPT_ROW_SELECTOR = '[data-clock]'
 const PROMPT_OFFICIAL_SELECTOR = '[data-slot="conversation.chat.node"]'
+// The official body of one message, never the card chrome: the host marks a card
+// body with `data-context-text`, and everything that is chrome (clock, actions,
+// buttons, the card title/time/chevron, the card's explanation line) is either
+// inside `data-clock` or one of the element kinds below.
+const PROMPT_BODY_SELECTOR = '[data-context-text="true"]'
+const PROMPT_CHROME_SELECTOR = '[data-clock],button,time,svg,style,script,[aria-hidden="true"]'
+// Only the single-glyph ellipsis a body clipped by the host ends with: three
+// ASCII dots are ordinary message content.
+const PROMPT_CLIPPED_MARK = /(?:…|⋯)\s*$/
+/* A collapsed turn card renders its header only, so its body is not in the DOM. */
+const PROMPT_CARD_COLLAPSED_SELECTOR = '[data-turn-trigger] [aria-expanded="false"]'
 /* How many ancestors to walk looking for the owning scrollport. */
 const PROMPT_MAX_ANCHOR_HOPS = 12
 /* Debounce for the mutation/feed driven resync (a streaming turn mutates a lot). */
@@ -63,6 +74,7 @@ type PromptBlockSpec = {
   text: string
   source: string
   textOnly: boolean
+  limited: boolean
   notice: string
   head: string
 }
@@ -178,14 +190,62 @@ const promptContainerFor = (anchor: Element | null, sessionId: string) => {
   return all.length === 1 ? all[0] : null
 }
 
-// Text of the official rendering only: our own sibling blocks are skipped.
-const promptOfficialText = (node: Element) => {
-  let text = ''
-  for (const child of Array.from(node.children)) {
-    if (child.hasAttribute(PROMPT_BLOCK_ATTR)) continue
-    text += child.textContent || ''
+// Text of the official rendering only: our own elements are skipped. A card body
+// carries the host's own mark; a plain user bubble has none, so its longest
+// chrome-free leaf stands in for it. The node's concatenated text is never used,
+// because that is what would append the card title, its clock, the explanation
+// line and the action labels to the message body.
+const promptChromeNode = (el: Element) => el.matches(PROMPT_CHROME_SELECTOR) || promptIsOurs(el)
+
+const promptTextClipped = (text: string) => PROMPT_CLIPPED_MARK.test(text)
+
+const promptCollapsedCard = (node: Element) => Boolean(node.querySelector(PROMPT_CARD_COLLAPSED_SELECTOR))
+
+// The text of one subtree with every chrome descendant dropped: skipping an
+// element is not enough, because `textContent` would still pull in the chrome
+// below it (a collapsed card's header holds both its title and its clock).
+const promptTextOf = (el: Element) => {
+  let out = ''
+  const walk = (node: Node) => {
+    if (node.nodeType === 3) {
+      out += node.nodeValue || ''
+      return
+    }
+    if (!(node instanceof Element)) return
+    if (promptChromeNode(node)) return
+    for (const child of Array.from(node.childNodes)) walk(child)
   }
-  return text
+  walk(el)
+  return out
+}
+
+const promptLongestLeafText = (root: Element) => {
+  let best = ''
+  const visit = (node: Node) => {
+    if (!(node instanceof Element)) return
+    if (promptChromeNode(node)) return
+    let branch = false
+    for (const child of Array.from(node.children)) {
+      if (!promptChromeNode(child)) branch = true
+    }
+    if (!branch) {
+      const text = promptTextOf(node)
+      if (text.trim().length > best.trim().length) best = text
+      return
+    }
+    for (const child of Array.from(node.children)) visit(child)
+  }
+  for (const child of Array.from(root.children)) visit(child)
+  return best
+}
+
+const promptOfficialText = (node: Element) => {
+  for (const el of Array.from(node.querySelectorAll(PROMPT_BODY_SELECTOR))) {
+    if (promptIsOurs(el)) continue
+    const text = el.textContent || ''
+    if (text.trim()) return text
+  }
+  return promptLongestLeafText(node)
 }
 
 const promptIsOurs = (el: Element) => el.hasAttribute(PROMPT_BLOCK_ATTR) || el.hasAttribute(PROMPT_TRIGGER_ATTR)
@@ -297,6 +357,7 @@ const promptBlockFor = (spec: PromptBlockSpec) => {
   const lines = spec.text.split('\n').length
   const foldable = spec.text.length > PROMPT_FOLD_CHARS || lines > PROMPT_FOLD_LINES
   wrapper.setAttribute('data-dsh-sam-prompt-foldable', foldable ? 'true' : 'false')
+  wrapper.setAttribute('data-dsh-sam-prompt-limited', spec.limited ? 'true' : 'false')
   /* Attachments live in the official node; there we never hide it. */
   wrapper.setAttribute('data-dsh-sam-prompt-hide-official', spec.textOnly ? 'true' : 'false')
   // The toolbar only ever exists inside the rendered block, so switching back to
@@ -324,6 +385,12 @@ const promptBlockFor = (spec: PromptBlockSpec) => {
     cut.className = 'dsh-sam-prompt-cut'
     cut.textContent = tr('prompt.truncated', { shown: String(PROMPT_RENDER_MAX_CHARS), total: String(spec.text.length) })
     wrapper.appendChild(cut)
+  }
+  if (spec.limited) {
+    const clipped = document.createElement('span')
+    clipped.className = 'dsh-sam-prompt-cut dsh-sam-prompt-limited'
+    clipped.textContent = tr('prompt.limited')
+    wrapper.appendChild(clipped)
   }
   wrapper.appendChild(bar)
   wrapper.appendChild(body)
@@ -353,7 +420,7 @@ export const promptBlockSignature = (spec: PromptBlockSpec) => {
   const text = spec.text ? promptSampleHash(spec.text) : ''
   // The locale marker is part of the signature so a language switch rebuilds
   // the block instead of leaving stale labels behind.
-  return [kind, spec.source, spec.text.length, text, spec.textOnly ? 't' : 'm', spec.notice, spec.head, spec.tr('prompt.raw')].join('|')
+  return [kind, spec.source, spec.text.length, text, spec.textOnly ? 't' : 'm', spec.limited ? 'c' : '', spec.notice, spec.head, spec.tr('prompt.raw')].join('|')
 }
 
 // Apply one node's state to one block: block visibility, official-node
@@ -500,7 +567,12 @@ export const promptPreviewAttach = (anchor: Element, propSessionId: string, tran
     const win = source && typeof source.getSnapshot === 'function' ? source.getSnapshot() || null : null
     // Alignment set: the records the conversation layer renders as user nodes.
     // Anything with a foreign `source.kind` renders as a context node instead.
-    const records = promptMessagesFromWindow(win).filter(message => !message.kind || message.kind === 'user')
+    // Every durable surface `user/message` in the window, whatever its
+    // `source.kind`: a context injection (relay / plugin / recall) is a real
+    // node with real text, and leaving it out was what turned the older turn
+    // cards of a long session into "cannot preview". A node with no record here
+    // is the genuinely missing case, and only that one reads the DOM.
+    const records = promptMessagesFromWindow(win)
     const bySeq = new Map<number, PromptMessage>()
     const byId = new Map<string, PromptMessage>()
     for (const message of records) {
@@ -542,9 +614,6 @@ export const promptPreviewAttach = (anchor: Element, propSessionId: string, tran
       const messageStart = freeMessages.length - count
       for (let step = 0; step < count; step += 1) mapped[freeNodes[nodeStart + step]] = freeMessages[messageStart + step]
     }
-    // No feed evidence at all (a legacy snapshot-only conversation): fall back to
-    // the official node's own text and mark the block's provenance as "dom".
-    const legacy = records.length === 0 && !(win && win.hasMore)
     const paged = Boolean(win && win.hasMore)
     let headPending = paged
     const seen = new Set<string>()
@@ -566,20 +635,34 @@ export const promptPreviewAttach = (anchor: Element, propSessionId: string, tran
       let text = ''
       let sourceKind = 'events'
       let textOnly = true
+      let limited = false
       let notice = ''
       if (message) {
         text = message.text
         textOnly = message.textOnly && !promptNodeIsCard(node)
-      } else if (legacy) {
-        text = promptOfficialText(node)
-        sourceKind = 'dom'
-        textOnly = !node.querySelector('img') && !promptNodeIsCard(node)
-        if (!text.trim()) text = ''
+      } else {
+        // No event for this node: the window is a tail page that starts after this
+        // message, or the conversation has no feed at all. The official node still
+        // renders the body (an expanded turn card keeps it in the DOM), so read it
+        // there instead of reporting the message as unavailable; only an empty
+        // read is reported as a notice.
+        const dom = promptOfficialText(node)
+        if (dom.trim()) {
+          text = dom
+          sourceKind = 'dom'
+          limited = promptTextClipped(text)
+          textOnly = !node.querySelector('img') && !promptNodeIsCard(node)
+        } else if (promptCollapsedCard(node)) {
+          // The body is hidden behind the card's own disclosure, so the notice
+          // names the way back to it instead of claiming the text is missing.
+          notice = tr('prompt.expandCard')
+        } else {
+          notice = paged ? tr('prompt.notLoaded') : tr('prompt.unavailable')
+        }
       }
-      if (!text) notice = paged ? tr('prompt.notLoaded') : tr('prompt.unavailable')
       const head = text && headPending ? tr('prompt.notLoaded') : ''
       if (text) headPending = false
-      const spec = { key, tr, text, source: sourceKind, textOnly, notice, head }
+      const spec = { key, tr, text, source: sourceKind, textOnly, limited, notice, head }
       const signature = promptBlockSignature(spec)
       // The trigger is anchored to the official action row once and then only
       // relabelled, so its position is byte-stable across every state change.
