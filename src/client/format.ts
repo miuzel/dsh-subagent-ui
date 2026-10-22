@@ -126,8 +126,65 @@ export const projectionMode=(s:SessionSummary|undefined)=>{const raw=s?.projecti
 const knownMode:(mode:unknown)=>SubagentMode|undefined=mode=>mode==='one-shot'||mode==='continuable'||mode==='external'?mode:undefined
 export const catalogEntriesOf=(state:SessionState|undefined,parentId:string)=>{const legacy=state?.subagentsByParent?.[parentId]?.entries;if(Array.isArray(legacy))return legacy.filter(e=>e.kind==='child').map(e=>({id:e.id,mode:knownMode(e.mode),label:e.label}));const projected=state?.byId?.[parentId]?.projectionValues?.subagentCatalog??state?.projectionsBySession?.[parentId]?.values?.subagentCatalog;return Array.isArray(projected)?projected.filter(e=>e&&e.id).map(e=>({id:e.id,mode:knownMode(e.mode),label:e.label})):[]}
 export const catalogEntryOf=(state:SessionState|undefined,parentId:string,childId:string)=>catalogEntriesOf(state,parentId).find(e=>e.id===childId)
+// Every parent Session that publishes a direct-child catalog, paired with that
+// parent's own entries. `modeMap` folds the entries by child id and DROPS the
+// parent; an external execution has no Session of its own, so its parent can
+// only be recovered from here — this is the index the synthesized external rows
+// are built from.
+export const catalogParents=(state:SessionState|undefined):{parentId:string;entries:CatalogEntry[]}[]=>{
+  const parents=new Set<string>()
+  Object.keys(state?.subagentsByParent||{}).forEach(id=>parents.add(id))
+  Object.keys(state?.byId||{}).forEach(id=>{if(state?.byId?.[id]?.projectionValues?.subagentCatalog)parents.add(id)})
+  Object.keys(state?.projectionsBySession||{}).forEach(id=>{if(state?.projectionsBySession?.[id]?.values?.subagentCatalog)parents.add(id)})
+  return [...parents].map(parentId=>({parentId,entries:catalogEntriesOf(state,parentId)}))
+}
 export const childModeOf=(s:SessionSummary|undefined,catalog:CatalogEntry|undefined)=>catalog?.mode??projectionMode(s)
-export const modeMap:(state:SessionState|undefined)=>Record<string, CatalogEntry>=state=>{const parents=new Set<string>();Object.keys(state?.subagentsByParent||{}).forEach(id=>parents.add(id));Object.keys(state?.byId||{}).forEach(id=>{if(state?.byId?.[id]?.projectionValues?.subagentCatalog)parents.add(id)});Object.keys(state?.projectionsBySession||{}).forEach(id=>{if(state?.projectionsBySession?.[id]?.values?.subagentCatalog)parents.add(id)});const map:Record<string, CatalogEntry>={};parents.forEach(parentId=>{catalogEntriesOf(state,parentId).forEach(entry=>{if(map[entry.id]===undefined)map[entry.id]=entry})});return map}, highlight=(text:unknown,term:string)=>{if(!term)return text;const parts=String(text).split(new RegExp(`(${term.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')})`,'ig'));return parts.map((part,i)=>i%2?jsx('mark',{children:part},i):part)}
+export const modeMap:(state:SessionState|undefined)=>Record<string, CatalogEntry>=state=>{const map:Record<string, CatalogEntry>={};catalogParents(state).forEach(({entries})=>{entries.forEach(entry=>{if(map[entry.id]===undefined)map[entry.id]=entry})});return map}
+// Rows for external executions that have NO Session in `byId`.
+//
+// This is the piece the external feature was missing: `byId` is the host's
+// SESSION store, and an external execution (claude-code / codex) never creates a
+// child Session — its catalog id is a bare `randomUUID()`. A row built only from
+// `byId` therefore can never show one, which is why the manager said "no
+// subagents match" while the host was running a codex agent.
+//
+// The row is synthesized from the facts that DO exist:
+// - `parentId`: the parent Session whose catalog lists this id (the only source
+//   that binds an external child to a parent);
+// - `mode`: `'external'` from that catalog entry;
+// - `name`: the catalog `label`, else the short id (never the provider, which is
+//   the family's engine, not the agent's name);
+// - `startedAt`/`updatedAt`: the measured `startedAt` of a lifecycle edge, else
+//   `0` for a row whose run this page cannot see. `0` is deliberate: an unknown
+//   time must not outrank a real one in a recency sort, and `updatedAt >= 0`
+//   still passes every "is it old" filter.
+// `running` stays false here; it is set by the caller from the lifecycle state,
+// because the host's own `activity` is a constant for these ids.
+export const externalRowsOf=(tr:Tr,state:SessionState|undefined,externalStates:ExternalStates)=>{
+  const byId=state?.byId||{}
+  const rows:SubagentRow[]=[]
+  const seen=new Set<string>()
+  catalogParents(state).forEach(({parentId,entries})=>{
+    const parent=byId[parentId]
+    if(!parent)return
+    entries.forEach(entry=>{
+      if(entry.mode!=='external'||byId[entry.id]||seen.has(entry.id))return
+      // A parent whose `origin` says subagent is itself a child; take the root so
+      // the row groups with the workspace the operator sees.
+      const root=rootSession(byId,parentId)
+      const owner=byId[root]||parent
+      const external=externalStates[entry.id]
+      const startedAt=typeof external?.startedAt==='number'?external.startedAt:0
+      // The workspace comes from the ROOT's `cwd`; when the root publishes none,
+      // fall back to the catalog parent's so the row is never orphaned into
+      // "unknown workspace" while its parent lives in a real one.
+      const cwd=owner.cwd||parent.cwd
+      seen.add(entry.id)
+      rows.push({id:entry.id,parentId,origin:'external',name:entry.label||short(tr,entry.id),mode:'external',label:entry.label,createdAt:startedAt||undefined,updatedAt:startedAt,cwd,parentCwd:cwd,running:false,external})
+    })
+  })
+  return rows
+}, highlight=(text:unknown,term:string)=>{if(!term)return text;const parts=String(text).split(new RegExp(`(${term.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')})`,'ig'));return parts.map((part,i)=>i%2?jsx('mark',{children:part},i):part)}
 // Model selection is a read-only capability probe: the host projection key is
 // absent on older hosts, and both of its fields are null until the session
 // records a request, so a missing value renders as the i18n fallback instead of

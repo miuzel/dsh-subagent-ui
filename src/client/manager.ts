@@ -1,5 +1,5 @@
 import { DAY, PAGE, key, defaultTabs, DEFAULT_LIGHT_BG, DEFAULT_DARK_BG, load } from './bootstrap'
-import { age, title, short, workspace, modeLabel, promptPreview, statsLine, statsUsageTitle, rootSession, modeMap, childModeOf, highlight, modeModelLine, asideButton, terminalClass, terminalTitle, isExternalRow, externalEngineName, externalStatusText, externalStatusTitle, externalDotClass, externalStopTargetOf } from './format'
+import { age, title, short, workspace, modeLabel, promptPreview, statsLine, statsUsageTitle, rootSession, modeMap, childModeOf, highlight, modeModelLine, asideButton, terminalClass, terminalTitle, isExternalRow, externalEngineName, externalStatusText, externalStatusTitle, externalDotClass, externalStopTargetOf, externalRowsOf } from './format'
 import { useExternalStatus, requestExternalStop } from './external'
 import { ActiveFloat } from './active-float'
 import { LiveOutput } from './live-output'
@@ -38,12 +38,17 @@ export function Manager({t:tr,useSessions,openChild,openSession,refresh,setCatal
   // The external-agent channel. `externalHasRows` is the demand signal: only a
   // catalog row with mode 'external' starts the poller, so a host without
   // external providers (and every dsh before 0.2.1) never issues a request.
-  const modes=React.useMemo(()=>modeMap(state),[state]),externalHasRows=React.useMemo(()=>{for(const id of Object.keys(modes)){if(modes[id]?.mode==='external')return true}return false},[modes]),externalChannel=useExternalStatus(externalHasRows),externalStates=externalChannel.states,subagentRows=React.useMemo<SubagentRow[]>(()=>{const byId=state.byId;return Object.values(byId).filter(s=>s.origin==='subagent').map(s=>{const catalog=modes[s.id],mode=childModeOf(s,catalog),external=mode==='external'?externalStates[s.id]:undefined;
+  const modes=React.useMemo(()=>modeMap(state),[state]),externalHasRows=React.useMemo(()=>{for(const id of Object.keys(modes)){if(modes[id]?.mode==='external')return true}return false},[modes]),externalChannel=useExternalStatus(externalHasRows),externalStates=externalChannel.states,subagentRows=React.useMemo<SubagentRow[]>(()=>{const byId=state.byId,rows:SubagentRow[]=Object.values(byId).filter(s=>s.origin==='subagent').map(s=>{const catalog=modes[s.id],mode=childModeOf(s,catalog),external=mode==='external'?externalStates[s.id]:undefined;
     // For an external child the host's `running` is a constant (there is no
     // Session to look up), so the measured lifecycle edge is the only thing that
     // may set it; an unknown edge leaves the row not running rather than
     // inventing either answer.
-    return {...s,...catalog,mode,name:catalog?.label||title(s),parentCwd:byId[s.parentId]?.cwd,external,running:mode==='external'?(external?.status==='running'):s.running}})},[state.byId,modes,externalStates]),allRows=React.useMemo(()=>{if(!open)return [];const rawTerm=query.trim().toLocaleLowerCase(),idOnly=rawTerm.startsWith('id:'),term=idOnly?rawTerm.slice(3).trim():rawTerm;return subagentRows.filter(s=>{if(workspaceKey&&s.parentCwd!==workspaceKey)return false;if(selectedSession!=='all'&&s.parentId!==selectedSession)return false;const unfiltered=tab==='all';if(!prefs.showArchived&&archived.has(s.id))return false;if(prefs.hideOneShot&&s.mode==='one-shot')return false;if(s.mode==='external')return true;if(!unfiltered&&prefs.hideOld&&!s.running&&Date.now()-s.updatedAt>(prefs.oldDays||30)*DAY)return false;const custom=tabs.find(t=>t.id===tab);if(custom?.regex==='__OTHER__'){const matched=tabs.some(t=>!['filtered','all','other'].includes(t.id)&&t.regex&&(()=>{try{return new RegExp(t.regex,'i').test(s.name)}catch{return false}})());if(matched)return false}else if(custom?.regex&&custom.regex!=='__ALL__'){try{if(!new RegExp(custom.regex,'i').test(s.name))return false}catch{return false}}return !term||`${idOnly?`${s.id} ${s.parentId||''}`:`${s.name} ${title(s)} ${workspace(tr,s)}`}`.toLocaleLowerCase().includes(term)}).sort((a,b)=>{const ar=recentIds.indexOf(a.id),br=recentIds.indexOf(b.id);return ar!==br?(ar<0?1:br<0?-1:ar-br):a.running!==b.running?(b.running?1:-1):sort==='title'?a.name.localeCompare(b.name):sort==='type'?modeLabel(tr,a.mode).localeCompare(modeLabel(tr,b.mode)):b.updatedAt-a.updatedAt})},[open,subagentRows,query,sort,prefs,scope,currentCwd,currentId,scopeDetail,workspaceKey,selectedSession,tab,tabs,recentIds,tr])
+    return {...s,...catalog,mode,name:catalog?.label||title(s),parentCwd:byId[s.parentId]?.cwd,external,running:mode==='external'?(external?.status==='running'):s.running}
+  })
+  // Session-less external executions are appended here: they exist only in the
+  // parent's catalog, so the `byId` pass above can never produce them (see
+  // externalRowsOf). Their `running` comes from the measured lifecycle edge.
+  return [...rows,...externalRowsOf(tr,state,externalStates).map(r=>({...r,running:r.external?.status==='running'}))]},[state,modes,externalStates,tr]),allRows=React.useMemo(()=>{if(!open)return [];const rawTerm=query.trim().toLocaleLowerCase(),idOnly=rawTerm.startsWith('id:'),term=idOnly?rawTerm.slice(3).trim():rawTerm;return subagentRows.filter(s=>{if(workspaceKey&&s.parentCwd!==workspaceKey)return false;if(selectedSession!=='all'&&s.parentId!==selectedSession)return false;const unfiltered=tab==='all';if(!prefs.showArchived&&archived.has(s.id))return false;if(prefs.hideOneShot&&s.mode==='one-shot')return false;if(s.mode==='external')return true;if(!unfiltered&&prefs.hideOld&&!s.running&&Date.now()-s.updatedAt>(prefs.oldDays||30)*DAY)return false;const custom=tabs.find(t=>t.id===tab);if(custom?.regex==='__OTHER__'){const matched=tabs.some(t=>!['filtered','all','other'].includes(t.id)&&t.regex&&(()=>{try{return new RegExp(t.regex,'i').test(s.name)}catch{return false}})());if(matched)return false}else if(custom?.regex&&custom.regex!=='__ALL__'){try{if(!new RegExp(custom.regex,'i').test(s.name))return false}catch{return false}}return !term||`${idOnly?`${s.id} ${s.parentId||''}`:`${s.name} ${title(s)} ${workspace(tr,s)}`}`.toLocaleLowerCase().includes(term)}).sort((a,b)=>{const ar=recentIds.indexOf(a.id),br=recentIds.indexOf(b.id);return ar!==br?(ar<0?1:br<0?-1:ar-br):a.running!==b.running?(b.running?1:-1):sort==='title'?a.name.localeCompare(b.name):sort==='type'?modeLabel(tr,a.mode).localeCompare(modeLabel(tr,b.mode)):b.updatedAt-a.updatedAt})},[open,subagentRows,query,sort,prefs,scope,currentCwd,currentId,scopeDetail,workspaceKey,selectedSession,tab,tabs,recentIds,tr])
   const deferredSubagentRows=React.useDeferredValue(subagentRows),activeRows=React.useMemo(()=>subagentRows.filter(s=>s.running).filter(s=>(!currentCwd||s.parentCwd===currentCwd)&&(prefs.showArchived||!archived.has(s.id))&&(!prefs.hideOneShot||s.mode!=='one-shot')).sort((a,b)=>b.updatedAt-a.updatedAt),[subagentRows,currentCwd,prefs,archived])
   // Stopping an external run goes through the host entry (its ledger resolves the
   // parent from the lifecycle edge and calls the host's own `interrupt`), so it
@@ -61,6 +66,17 @@ export function Manager({t:tr,useSessions,openChild,openSession,refresh,setCatal
   const fireAndForgetContinue=pending=>{if(pending&&typeof pending.catch==='function')pending.catch(error=>console.warn('subagent-workspace-ui: unable to continue the subagent',error))},
     continueSubagent=async row=>{if(row.running||row.mode==='one-shot'||continuingIds.has(row.id))return;setContinuingIds(prev=>new Set(prev).add(row.id));try{const address=row.parentId&&row.mode?{parentSessionId:row.parentId,childSessionId:row.id,mode:row.mode}:null,held=await acquirePromptFace(row.id,address);if(!held){console.warn('subagent-workspace-ui: no session face carrying a prompt is reachable for this subagent',row.id);return}try{if(address)held.face.configureSubagent?.(address);const result:any=await held.face.prompt([{type:'text',text:tr('continuePrompt')}],'queue');if(result&&result.ok===false){const code=result.error?.code||'';if(code==='subagent/parent-unavailable')console.warn('subagent-workspace-ui: the parent session is not live, so the subagent cannot be continued',row.parentId,row.id);else console.warn('subagent-workspace-ui: the host refused the continue instruction',row.id,code||result.error);return}if(row.parentId)refresh(row.parentId)}finally{held.release()}}catch(e){console.warn('Unable to continue subagent',row.id,e)}finally{setContinuingIds(prev=>{const next=new Set(prev);next.delete(row.id);return next})}}
 
+  // The route is authenticated by the official /api channel: a refused request
+  // comes back as a NON-JSON body (`unauthorized` / `forbidden`), so the old
+  // bare `resp.json()` would surface a parse error instead of the real reason.
+  // This turns every non-OK answer into the same `{ok:false,error}` shape the
+  // callers already render, keeping the success path byte-identical.
+  const jsonOrAuthFailure=async resp=>{
+    let data=null
+    try{data=await resp.json()}catch{data=null}
+    if(data&&typeof data==='object')return data
+    return {ok:false,error:resp.status===401?tr('unauthorized'):resp.status===403?tr('forbidden'):`HTTP ${resp.status}`}
+  }
   const deleteSubagent=async row=>{
     if(row.running){
       if(!window.confirm(tr('confirm.deleteRunning',{name:row.name})))return
@@ -69,10 +85,11 @@ export function Manager({t:tr,useSessions,openChild,openSession,refresh,setCatal
     try{
       const resp=await fetch('/api/dsh-subagent-workspace-ui/delete',{
         method:'POST',
+        credentials:'same-origin',
         headers:{'content-type':'application/json'},
         body:JSON.stringify({sessionId:row.id,parentSessionId:row.parentId})
       })
-      const data=await resp.json()
+      const data=await jsonOrAuthFailure(resp)
       if(data.ok){
         if(row.parentId){refresh(row.parentId)}
         sessionsRt?.refresh?.()
@@ -95,10 +112,11 @@ export function Manager({t:tr,useSessions,openChild,openSession,refresh,setCatal
     try{
       const resp=await fetch('/api/dsh-subagent-workspace-ui/batch-delete',{
         method:'POST',
+        credentials:'same-origin',
         headers:{'content-type':'application/json'},
         body:JSON.stringify({items})
       })
-      const data=await resp.json()
+      const data=await jsonOrAuthFailure(resp)
       if(data.ok){
         const parents=new Set<string>(items.map(x=>x.parentSessionId).filter(Boolean))
         parents.forEach(pid=>refresh(pid))

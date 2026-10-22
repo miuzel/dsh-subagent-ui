@@ -13,6 +13,11 @@ import type { ExternalStates } from './types'
 //   `unknown`, not as "ended".
 // - The interval belongs to the caller's effect: a session switch, a panel close
 //   or the plugin's own disposal tears it down with the component.
+// - The URL is the browser-visible path, which on a host with the official
+//   connection service is served by the authenticated `/api` channel: the
+//   browser's own session cookie admits it, so `credentials: 'same-origin'` is
+//   set and NO token is ever assembled here (the channel answers 401 without a
+//   credential, which the reader already renders as `unknown`).
 const EXTERNAL_POLL_MS=2500
 const EXTERNAL_STATUS_URL='/api/dsh-subagent-workspace-ui/external-status'
 const EXTERNAL_STOP_URL='/api/dsh-subagent-workspace-ui/external-stop'
@@ -25,7 +30,7 @@ export function useExternalStatus(enabled:boolean){
       if(!alive||inFlight)return
       inFlight=true
       try{
-        const response=await fetch(EXTERNAL_STATUS_URL,{headers:{accept:'application/json'},cache:'no-store'})
+        const response=await fetch(EXTERNAL_STATUS_URL,{headers:{accept:'application/json'},cache:'no-store',credentials:'same-origin'})
         if(!response.ok)throw new Error(`HTTP ${response.status}`)
         const data=await response.json()
         if(!alive)return
@@ -52,7 +57,7 @@ export function useExternalStatus(enabled:boolean){
 // leaving a spinner that quietly disappears.
 export async function requestExternalStop(runId:string){
   try{
-    const response=await fetch(EXTERNAL_STOP_URL,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({runId})})
+    const response=await fetch(EXTERNAL_STOP_URL,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({runId}),credentials:'same-origin'})
     let data=null
     try{data=await response.json()}catch{}
     return {ok:response.ok&&Boolean(data&&data.ok),status:response.status,error:data&&data.error?String(data.error):`HTTP ${response.status}`}
