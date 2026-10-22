@@ -1,4 +1,4 @@
-import type { Tr, SessionSummary, SessionState, CatalogEntry, SubagentRow, CwdLike, TokenUsage } from './types'
+import type { Tr, SessionSummary, SessionState, CatalogEntry, SubagentRow, CwdLike, TokenUsage, SubagentMode, ExternalState, ExternalStates, ExternalLedger } from './types'
 export const age=(tr:Tr,stamp:number)=>{const seconds=Math.max(0,Math.floor((Date.now()-(stamp||Date.now()))/1000));if(seconds<60)return tr('age.sAgo',{s:seconds});const minutes=Math.floor(seconds/60);if(minutes<60)return tr('age.mAgo',{m:minutes});const hours=Math.floor(minutes/60);if(hours<24)return tr('age.hmAgo',{h:hours,m:minutes%60});return tr('age.dAgo',{d:Math.floor(hours/24)})}
 // The official cache-hit share formatter, ported expression-for-expression from
 // the host chat client (`@deepseek-ai/dsh-client-ui-chat/lib/client.js`:
@@ -55,7 +55,7 @@ function formatCacheHitPercent(cacheReadTokens:number,promptTokens:number,decima
   }
   return `99.${'9'.repeat(distinguishingPlaces-1)}${10-roundedLoss}`
 }
-export const title:(s:SessionSummary)=>string=s=>s.title||s.displayTitle||s.id, short=(tr:Tr,v:string)=>v?v.replace(/^session-/,'').slice(0,8):tr('unknown'), workspace=(tr:Tr,s:CwdLike|undefined)=>s?.cwd?s.cwd.split(/[\\/]/).filter(Boolean).pop():tr('unknownWorkspace'), modeLabel=(tr:Tr,m:string|undefined)=>m==='one-shot'?tr('oneShot'):m==='continuable'?tr('continuable'):tr('typeLoading'), // Token arithmetic shared by every usage surface, mirroring the official chat
+export const title:(s:SessionSummary)=>string=s=>s.title||s.displayTitle||s.id, short=(tr:Tr,v:string)=>v?v.replace(/^session-/,'').slice(0,8):tr('unknown'), workspace=(tr:Tr,s:CwdLike|undefined)=>s?.cwd?s.cwd.split(/[\\/]/).filter(Boolean).pop():tr('unknownWorkspace'), modeLabel=(tr:Tr,m:string|undefined)=>m==='one-shot'?tr('oneShot'):m==='continuable'?tr('continuable'):m==='external'?tr('external'):tr('typeLoading'), // Token arithmetic shared by every usage surface, mirroring the official chat
 // client exactly: billed input = uncached + cache read + cache write (three
 // disjoint prompt-side buckets), the usage total adds the output bucket, and the
 // cache-hit share divides by billed input ALONE — never by the total, which
@@ -118,7 +118,12 @@ export const projectionMode=(s:SessionSummary|undefined)=>{const raw=s?.projecti
 // folded here in host order into the same `{ id, mode, label }` rows; a legacy
 // catalog that exists is authoritative (old hosts keep their exact behavior), and
 // an `'unknown'` mode keeps the label while leaving the mode to rung 2.
-const knownMode=mode=>mode==='one-shot'||mode==='continuable'?mode:undefined
+//
+// `'external'` is the third arm: dsh 0.2.1 records an execution from a provider
+// without `prepareContinuable` with catalog `version: 2, mode: 'external'`. It used
+// to be dropped here, which demoted those children to mode-less rows the manager
+// could not label — the whole reason external agents were invisible.
+const knownMode:(mode:unknown)=>SubagentMode|undefined=mode=>mode==='one-shot'||mode==='continuable'||mode==='external'?mode:undefined
 export const catalogEntriesOf=(state:SessionState|undefined,parentId:string)=>{const legacy=state?.subagentsByParent?.[parentId]?.entries;if(Array.isArray(legacy))return legacy.filter(e=>e.kind==='child').map(e=>({id:e.id,mode:knownMode(e.mode),label:e.label}));const projected=state?.byId?.[parentId]?.projectionValues?.subagentCatalog??state?.projectionsBySession?.[parentId]?.values?.subagentCatalog;return Array.isArray(projected)?projected.filter(e=>e&&e.id).map(e=>({id:e.id,mode:knownMode(e.mode),label:e.label})):[]}
 export const catalogEntryOf=(state:SessionState|undefined,parentId:string,childId:string)=>catalogEntriesOf(state,parentId).find(e=>e.id===childId)
 export const childModeOf=(s:SessionSummary|undefined,catalog:CatalogEntry|undefined)=>catalog?.mode??projectionMode(s)
@@ -174,4 +179,100 @@ export const asideButton=(options:{tr:Tr,row:SubagentRow,addressOf?:((row:Subage
   try{address=addressOf(options.row)}catch(error){console.warn('subagent-workspace-ui: sidebar address lookup failed',error);address=null}
   if(address===undefined)return null
   return jsx('button',{type:'button',className:options.compact?'dsh-sam-side-btn dsh-sam-side-btn-compact':'dsh-sam-side-btn',disabled:!address,title:address?tr('openInSidebar'):tr('openInSidebarUnavailable'),'aria-label':address?tr('openInSidebar.named',{name:options.row.name}):tr('openInSidebarUnavailable'),onClick:event=>{event.stopPropagation();if(!address)return;if(typeof options.open==='function'&&options.open(address)===true){if(typeof options.onOpened==='function')options.onOpened();return}window.alert(tr('openInSidebarFailed'))},children:'◫'})
+}
+// ---------------------------------------------------------------- external --
+// Everything below concerns rows whose catalog mode is `'external'`: a run of a
+// dsh 0.2.1 provider without `prepareContinuable` (claude-code / codex). Such a
+// child has NO local Session — its id is a branded `randomUUID()`, so `byId[id]`
+// never exists, the host's `activity` for it is the constant `'inactive'`, and
+// every session-derived surface (live output, prompt preview, usage, timing) is
+// empty or wrong for it. The only authoritative live signal is the lifecycle pair
+// the host entry records; `externalLedgerOf` is the single reader of that payload.
+export const isExternalRow=(row:{mode?:string}|undefined)=>row?.mode==='external'
+export const isExternalMode=(mode:string|undefined)=>mode==='external'
+// The provider name as the host publishes it, or nothing. The payload carries the
+// registered provider id (`claude-code`, `codex`); anything unreadable is dropped
+// rather than guessed, so the panel falls back to the family name alone.
+export const providerIdOf=(value:unknown)=>{
+  if(typeof value!=='string')return undefined
+  const clean=value.trim()
+  return /^[a-z0-9][a-z0-9._-]*$/i.test(clean)&&clean.length<=48?clean:undefined
+}
+// One lifecycle payload, folded per child id. A child may have several terminal
+// edges in one process (a one-shot delegation repeated under the same id is not
+// possible for external runs, but a re-delegation can reuse a catalog label), so
+// the LATEST edge wins and `historyCount` keeps the fact that more than one
+// exists instead of hiding it.
+export const externalStatesOf=(payload:ExternalLedger|null|undefined)=>{
+  const states:Record<string, ExternalState>={}
+  if(!payload||payload.ok===false)return states
+  const active=Array.isArray(payload.active)?payload.active:[]
+  const ended=Array.isArray(payload.ended)?payload.ended:[]
+  const rankOf=run=>typeof run?.seq==='number'?run.seq:0
+  const finished=[...ended].filter(run=>run&&typeof run.id==='string').sort((a,b)=>rankOf(a)-rankOf(b))
+  for(const run of finished){
+    const previous=states[run.id]
+    states[run.id]={status:'ended',provider:providerIdOf(run.provider),runId:typeof run.runId==='string'?run.runId:undefined,startedAt:run.startedAt,endedAt:run.endedAt,stopReason:typeof run.stopReason==='string'?run.stopReason:undefined,durationMs:typeof run.durationMs==='number'&&Number.isFinite(run.durationMs)?Math.max(0,run.durationMs):undefined,historyCount:(previous?.historyCount||0)+1}
+  }
+  for(const run of active){
+    if(!run||typeof run.id!=='string')continue
+    const previous=states[run.id]
+    if(previous&&previous.status==='running')continue
+    // A live edge outranks every terminal one for the same id: the child is
+    // running right now, whatever an earlier epoch of it did.
+    states[run.id]={status:'running',provider:providerIdOf(run.provider),runId:typeof run.runId==='string'?run.runId:undefined,startedAt:run.startedAt,historyCount:previous?.historyCount||0}
+  }
+  return states
+}
+// The stop-reason vocabulary the host publishes (`SubagentResult['stopReason']`),
+// each with its own label. An unknown value keeps its raw string in the tooltip
+// but is labelled generically, so a backend-added reason can never be mistaken
+// for a failure or a success.
+const STOP_REASONS=['completed','aborted','error','refusal','max-tokens']
+export const externalStopLabel=(tr:Tr,stopReason:string|undefined)=>{
+  if(!stopReason)return tr('ext.stop.unknown')
+  return STOP_REASONS.includes(stopReason)?tr(`ext.stop.${stopReason}`):tr('ext.stop.unknown')
+}
+// The engine family line: the host's provider id plus, for the two providers
+// this feature was written for, their display names. Everything else is shown
+// verbatim from the host — never mapped onto a known engine.
+export const externalEngineName=(tr:Tr,provider:string|undefined)=>!provider?tr('ext.engineUnknown'):provider==='claude-code'?tr('ext.engine.claudeCode'):provider==='codex'?tr('ext.engine.codex'):provider
+// The one external status line used by the row, the details block and the float.
+// `measured` says where the fact came from so a reader can tell an observed edge
+// from the absence of one; `unknown` is stated, never rendered as ended/running.
+export const externalStatusText=(tr:Tr,state:ExternalState|undefined)=>{
+  if(!state)return tr('ext.status.unknown')
+  if(state.status==='running')return state.provider?tr('ext.status.runningEngine',{engine:externalEngineName(tr,state.provider)}):tr('ext.status.running')
+  if(state.status==='ended'){
+    const reason=externalStopLabel(tr,state.stopReason)
+    const duration=typeof state.durationMs==='number'?tr('ext.duration',{seconds:Math.max(0,Math.round(state.durationMs/1000))}):null
+    return duration?tr('ext.status.endedDetail',{reason,duration}):tr('ext.status.ended',{reason})
+  }
+  return tr('ext.status.unknown')
+}
+// Tooltip/aria for the same fact, so the marker never claims more than the text.
+export const externalStatusTitle=(tr:Tr,state:ExternalState|undefined)=>{
+  if(!state)return tr('ext.title.unknown')
+  if(state.status==='running')return tr('ext.title.running',{engine:externalEngineName(tr,state.provider)})
+  if(state.status==='ended')return tr('ext.title.ended',{reason:externalStopLabel(tr,state.stopReason),engine:externalEngineName(tr,state.provider)})
+  return tr('ext.title.unknown')
+}
+// The marker class for an external row. It deliberately reuses the existing dot
+// vocabulary — a running ring only for a measured running edge — and adds the
+// external accent for the two non-running arms, which take no colour from the
+// session-derived terminal verdicts (those do not exist for an external child).
+export const externalDotClass=(state:ExternalState|undefined)=>{
+  if(state?.status==='running')return ' dsh-sam-dot-ext-running'
+  return ' dsh-sam-dot-ext'
+}
+// The stop target of a row, or null when a row may not be stopped by this plugin.
+// Local rows keep their exact existing path (`liveBindingFor` → session); an
+// external row has no session face and is stopped through the host entry, whose
+// id is the run id — the only handle that names one execution rather than a
+// catalog row that may have run several times.
+export const externalStopTargetOf=(row:SubagentRow|undefined,external:ExternalStates|undefined)=>{
+  if(!isExternalRow(row))return null
+  const state=external?.[row.id]
+  if(!state||state.status!=='running'||!state.runId)return null
+  return {runId:state.runId,id:row.id}
 }

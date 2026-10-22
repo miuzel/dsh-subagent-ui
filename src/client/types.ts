@@ -4,7 +4,13 @@
 /** Bound translator provided by the DSH client-locale slot. */
 export type Tr = (key: string, params?: Record<string, unknown>) => string
 
-export type SubagentMode = 'one-shot' | 'continuable'
+/*
+ * A child's execution family, as the host records it in its own catalog. Since
+ * dsh 0.2.1 a provider without `prepareContinuable` (the claude-code / codex
+ * plugins) publishes `'external'` next to the two local arms; that child has no
+ * local Session at all, so nothing derived from `byId[childId]` applies to it.
+ */
+export type SubagentMode = 'one-shot' | 'continuable' | 'external'
 
 export interface TokenUsage {
   uncachedInputTokens: number
@@ -187,7 +193,63 @@ export interface CatalogEntry {
 export type SubagentRow = SessionSummary & Partial<ModeInfo> & {
   name: string
   parentCwd?: string
+  /* Set only on an external row: the measured lifecycle state of its run. */
+  external?: ExternalState
 }
+
+/*
+ * The host's own lifecycle ledger for external executions, as served by the
+ * plugin's host entry (`/api/dsh-subagent-workspace-ui/external-status`).
+ * `active` holds runs whose `subagent/start` has not been paired by a
+ * `subagent/end`; `ended` holds the most recent terminal edges. Nothing else in
+ * the response is trusted: a run is matched to a row by the child id it carries.
+ */
+export interface ExternalRun {
+  runId: string
+  id: string
+  provider?: string
+  parentId?: string
+  seq?: number
+  startedAt?: number
+}
+
+export interface ExternalRunEnd extends ExternalRun {
+  endedAt: number
+  stopReason?: string
+  paired?: boolean
+  durationMs?: number
+}
+
+export interface ExternalLedger {
+  ok?: boolean
+  version?: number
+  active: ExternalRun[]
+  ended: ExternalRunEnd[]
+  at?: number
+}
+
+/*
+ * What the panel may honestly say about one external row:
+ * - `running`: a live `subagent/start` without a matching end (measured, not
+ *   inferred from the run's process or from the host's constant `inactive`).
+ * - `ended`: a terminal edge this page observed while it was open.
+ * - `unknown`: no edge at all — the run predates this page's ledger, or the host
+ *   publishes no lifecycle pair. Never rendered as either of the other two.
+ * A row absent from the map is not external at all.
+ */
+export interface ExternalState {
+  status: 'running' | 'ended' | 'unknown'
+  provider?: string
+  runId?: string
+  startedAt?: number
+  endedAt?: number
+  stopReason?: string
+  durationMs?: number
+  /* How many terminal edges the host holds for this child (more than one = history). */
+  historyCount?: number
+}
+
+export type ExternalStates = Record<string, ExternalState>
 
 export interface TabDef {
   id: string

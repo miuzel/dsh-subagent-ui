@@ -21,6 +21,7 @@ const MODULES = [
   'styles',       // const css = `...`
   'bootstrap',    // style injection, DAY/PAGE/key/defaultTabs, DEFAULT_*_BG, load
   'format',       // age/title/short/workspace/modeLabel/tokenTotal/fmt/promptPreview/statsLine/category/rootSession/modeMap/highlight
+  'external',     // external-agent channel: useExternalStatus/requestExternalStop
   'runtime',      // sessionsRt, NOOP
   'retain',       // RETAIN_SOURCE/RETAIN_LIMIT, retainDeclare/retainClear, liveBindingFor
   'live-output',  // LiveOutput
