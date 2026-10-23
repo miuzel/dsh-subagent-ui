@@ -10,13 +10,24 @@
 //                     real carrier mounts it. No credential -> 401 on all four;
 //                     real API cookie -> 200 with the pre-migration body.
 //   B. legacy       — no `connection` in the plugin's context: routes go to
-//                     `webServer.register`, and the plugin's fallback gate must
-//                     still refuse every credential-less request (this is the
-//                     200-it-used-to-answer regression).
+//                     `webServer.register`, gated by `connection.admit` read
+//                     from the ROOT context, and the gate must refuse every
+//                     credential-less request (the 200-it-used-to-answer
+//                     regression) and every FORGED cookie.
 //   C. later arrival— the same, with `webServer` provided only after `apply`.
+//   D. no admit     — a host whose connection service has no `admit`: the
+//                     plugin must register NOTHING (fail closed), never a
+//                     shape-checked route.
 //
 // Every scenario carries a NEGATIVE CONTROL (a request that used to be served
 // and must now be refused); remove the gate and these flip to 200/400.
+//
+// THE FORGED-CREDENTIAL REGRESSION (g-024 / att-003). The legacy gate once had a
+// last-resort `'shape'` rung: it computed the ONE exported cookie name (the
+// authority is public, so anyone can) and accepted any `v<N>.<payload>.<sig>`
+// value without verifying the signature, so `v1.AAAA.BBBB` was served 200. The
+// name is still computed here, by the test, exactly as an attacker would:
+// `FORGED` is a credential that rung admitted and that must now be 401.
 //
 // WHERE THE HOST HALF COMES FROM. The host half is two packages the host ships:
 // `@deepseek-ai/cordis` (a peer dependency here, so the repository's own
@@ -540,19 +551,69 @@ async function scenarioFetchFace() {
   }
 }
 
-// ------------------------------------- B/C: the plugin's context lacks `connection`
-// The plugin still has to refuse a credential-less request, and it VERIFIES a
-// real credential through `ctx.get('connection')` on the root context, which is
-// the composition this fallback exists for (a plugin context that carries
-// `webServer` only).
-async function scenarioLegacy(label, provideWebServer) {
+// D. THE REAL 0.2.1 ORDERING (measured on dsh 0.2.1-rc.2): `webServer`
+//    provides first, `connection` ~250 ms later. Binding the first-arriving
+//    service would pin the plugin to the UNAUTHENTICATED surface for the life of
+//    the process, which is exactly what the fetch-face migration exists to
+//    prevent. The plugin must end up on `connection` and leave no webServer
+//    exact route behind.
+//
+//    NOTE: this scenario intentionally provides NO `connection` during the first
+//    30 ms, so the fallback cannot bind at all (no `admit` => fail closed) until
+//    the service arrives; what it asserts is the SETTLED state, which is the one
+//    that matters: once `connection` shows up, the plugin must be on the fetch
+//    face and no webServer exact route may remain.
+async function scenarioConnectionArrivesLate() {
   const ws = makeWebServer()
   const ctx = new cordis.Context()
-  if (provideWebServer) ctx.provide('webServer', ws)
+  ctx.provide('webServer', ws)
+  plugin.apply(ctx)
+  await sleep(30)
+  const early = [...ws.exact.keys()].sort()
+  ctx.provide('connection', hostConnection)
+  await sleep(120)
+  for (const { name } of ENDPOINTS) {
+    assert.ok(!ws.exact.has(browserVisible(name)), `${name} must not stay on the webServer surface once the authenticated face arrives`)
+  }
+  record('connection-arrives-late', { early: early.length ? 'webServer' : 'none (no admit yet)', settled: 'connection', webServerRoutes: ws.exact.size })
+}
+
+// ------------------------------------- B/C: the plugin's context lacks `connection`
+// The plugin still has to refuse a credential-less request AND verify a real
+// credential, through `ctx.get('connection')` on the root context (the protocol
+// channel of a cordis delivery), which is the composition this fallback exists
+// for (a plugin context that carries `webServer` only).
+//
+// What must NOT exist any more is the `'shape'` rung: a credential computed from
+// the PUBLIC authority and never signature-checked. `FORGED` is exactly such a
+// credential, built the way an attacker builds it, and the fallback must answer
+// 401 to it. Remove the gate and this scenario fails on that assert.
+// The host's admission is reachable from the plugin's fiber but the plugin's own
+// fiber is NOT the one that provided it, which is the composition this fallback
+// exists for. cordis resolves a service up the fiber chain, so providing
+// `connection` on the ROOT while the plugin runs on a child context (and on a
+// service object that has no `fetch` face to register on) reproduces exactly
+// that: `ctx.get('connection')` works, `connection.fetch` does not exist.
+function makeAdmitOnlyConnection() {
+  return {
+    admit: (request) => hostConnection.admit(request),
+    requestRejection: (request) => hostConnection.requestRejection(request),
+    browserAuth: hostAuth,
+    // Deliberately no `fetch`, no `rpc`: a host that authenticates but does not
+    // publish the exact-route registry this plugin prefers.
+  }
+}
+
+async function scenarioLegacy(label, provideWebServer) {
+  const ws = makeWebServer()
+  const root = new cordis.Context()
+  root.provide('connection', makeAdmitOnlyConnection())
+  if (provideWebServer) root.provide('webServer', ws)
+  const ctx = root.extend({})
   plugin.apply(ctx)
   await sleep(30)
   if (!provideWebServer) {
-    ctx.provide('webServer', ws)
+    root.provide('webServer', ws)
     await sleep(30)
   }
 
@@ -564,18 +625,42 @@ async function scenarioLegacy(label, provideWebServer) {
     if (!route) { res.writeHead(404); res.end('no route'); return }
     route.handler(req, res)
   })
+  // The forged cookies are named for THIS port, the way an attacker computes
+  // them: the authority is the one the browser is talking to.
+  const forgedForPort = (suffix) => `${exportedCookieName(`127.0.0.1:${port}`)}=${suffix}`
+  const forged = {}
   try {
     const anonymous = await anonymousSuite(port)
     assert.deepStrictEqual(anonymous, { 'external-status': 401, 'external-stop': 401, delete: 401, 'batch-delete': 401 }, `the fallback must refuse all four without a credential, got ${JSON.stringify(anonymous)}`)
 
-    // NEGATIVE CONTROL: this exact request answered 200 before the fix.
+    // NEGATIVE CONTROL 1: this exact request answered 200 before the fix.
     const control = await request(port, 'GET', browserVisible('external-status'))
     assert.notStrictEqual(control.status, 200, 'the credential-less 200 this task is about must be gone')
 
+    // NEGATIVE CONTROL 2 — THE FORGED-CREDENTIAL REGRESSION. Every one of these
+    // was served 200 by the `'shape'` rung, which never verified a signature.
+    for (const [variant, suffix] of [
+      ['all-as', 'v1.AAAA.BBBB'],
+      ['garbage-payload', 'v1.YWJjZGVm.Z2hpamtsbW5vcA'],
+      ['v2', 'v2.QUJDREVGL'],
+      ['truncated', 'v1.only-two-parts'],
+      ['empty-signature', 'v1.AAAA.'],
+    ]) {
+      for (const { name, method } of ENDPOINTS) {
+        const res = await request(port, method, browserVisible(name), { cookie: forgedForPort(suffix), body: method === 'POST' ? {} : undefined })
+        assert.strictEqual(res.status, 401, `a forged ${variant} cookie (${suffix}) must be 401 on ${name}, got ${res.status}`)
+      }
+      forged[variant] = 401
+    }
+    // A correct real cookie whose signature was altered is still not a credential.
+    const tampered = mintCookie('/connect', port, `127.0.0.1:${port}`)
+    const cut = tampered.lastIndexOf('.')
+    const broken = `${tampered.slice(0, cut + 1)}${tampered.slice(cut + 1, -3)}AAA`
+    const tamperedRes = await request(port, 'GET', browserVisible('external-status'), { cookie: broken })
+    assert.strictEqual(tamperedRes.status, 401, 'a tampered signature is refused')
+
     const lookalike = await request(port, 'GET', browserVisible('external-status'), { cookie: 'dsh-auth-looks-real=v1.abc.def' })
     assert.strictEqual(lookalike.status, 401, 'a cookie that only LOOKS like the session cookie is not a credential')
-    const wrongShape = await request(port, 'GET', browserVisible('external-status'), { cookie: `${exportedCookieName(`127.0.0.1:${port}`)}=v1.only-two-parts` })
-    assert.strictEqual(wrongShape.status, 401, 'a correctly named but malformed cookie is not a credential')
     const bogus = await request(port, 'GET', browserVisible('external-status'), { token: 'bogus' })
     assert.strictEqual(bogus.status, 401, 'a token the host cannot verify is not a credential')
 
@@ -587,37 +672,58 @@ async function scenarioLegacy(label, provideWebServer) {
     const wrongVerb = await request(port, 'POST', browserVisible('external-status'), { cookie: mintCookie('/connect', port, `127.0.0.1:${port}`), body: {} })
     assert.deepStrictEqual([wrongVerb.status, wrongVerb.json.error], [405, 'method-not-allowed'], 'the legacy surface keeps its 405 for a wrong verb')
 
-    record(label, { surface: 'webServer', registered, anonymous, control: control.status, lookalike: lookalike.status, wrongShape: wrongShape.status, bogusToken: bogus.status, browserCookie: browser.status, wrongVerb: wrongVerb.status, body: 'unchanged' })
+    record(label, { surface: 'webServer', gate: 'connection.admit', registered, anonymous, control: control.status, forged, tampered: tamperedRes.status, lookalike: lookalike.status, bogusToken: bogus.status, browserCookie: browser.status, wrongVerb: wrongVerb.status, body: 'unchanged' })
   } finally {
     server.close()
   }
 }
 
-// D. THE REAL 0.2.1 ORDERING (measured on dsh 0.2.1-rc.2): `webServer`
-//    provides first, `connection` ~250 ms later. Binding the first-arriving
-//    service would pin the plugin to the UNAUTHENTICATED surface for the life of
-//    the process, which is exactly what the fetch-face migration exists to
-//    prevent. The plugin must end up on `connection` and leave no webServer
-//    exact route behind.
-async function scenarioConnectionArrivesLate() {
+// E. A host whose connection service has NO `admit`: there is no honest policy
+//    the plugin can apply (it cannot verify a signature itself), so the fallback
+//    must register NOTHING. The failure mode this replaces is the `'shape'`
+//    route: present, answering 200 to a fabricated cookie.
+async function scenarioNoAdmit() {
   const ws = makeWebServer()
-  const ctx = new cordis.Context()
-  ctx.provide('webServer', ws)
-  plugin.apply(ctx)
-  await sleep(30)
-  const early = [...ws.exact.keys()].sort()
-  assert.deepStrictEqual(early, ENDPOINTS.map((e) => browserVisible(e.name)).sort(), 'the verified fallback serves immediately while connection loads')
-  ctx.provide('connection', hostConnection)
-  await sleep(120)
-  for (const { name } of ENDPOINTS) {
-    assert.ok(!ws.exact.has(browserVisible(name)), `${name} must leave the webServer surface once the authenticated face arrives`)
+  const noAdmit = {
+    browserAuth: hostAuth,
+    requestRejection: () => undefined,
   }
-  record('connection-arrives-late', { early: 'webServer', settled: 'connection', webServerRoutes: ws.exact.size })
+  const root = new cordis.Context()
+  root.provide('webServer', ws)
+  root.provide('connection', noAdmit)
+  plugin.apply(root.extend({}))
+  await sleep(30)
+
+  const registered = [...ws.exact.keys()]
+  assert.deepStrictEqual(registered, [], `without connection.admit no legacy route may be registered, got ${JSON.stringify(registered)}`)
+
+  const { server, port } = await startServer((req, res) => {
+    const route = ws.exact.get(req.url.split('?')[0])
+    if (!route) { res.writeHead(404); res.end('no route'); return }
+    route.handler(req, res)
+  })
+  const forged = {}
+  try {
+    const anonymous = await anonymousSuite(port)
+    assert.deepStrictEqual(anonymous, { 'external-status': 404, 'external-stop': 404, delete: 404, 'batch-delete': 404 }, `no route may serve, got ${JSON.stringify(anonymous)}`)
+    for (const [variant, suffix] of [['all-as', 'v1.AAAA.BBBB'], ['garbage-payload', 'v1.YWJjZGVm.Z2hpamtsbW5vcA'], ['v2', 'v2.QUJDREVGL']]) {
+      const res = await request(port, 'GET', browserVisible('external-status'), { cookie: `${exportedCookieName(`127.0.0.1:${port}`)}=${suffix}` })
+      assert.strictEqual(res.status, 404, `a forged ${variant} cookie must not reach a service at all, got ${res.status}`)
+      forged[variant] = 404
+    }
+    // Not even a REAL credential is served: there is no route to serve it.
+    const real = await request(port, 'GET', browserVisible('external-status'), { cookie: mintCookie('/connect', port, `127.0.0.1:${port}`) })
+    assert.strictEqual(real.status, 404, 'with no admission the surface is simply absent')
+    record('no-admit', { surface: 'none (fail closed)', registered: registered.length, anonymous, forged, real: real.status })
+  } finally {
+    server.close()
+  }
 }
 
 await scenarioConnectionArrivesLate()
 await scenarioLegacy('legacy-fallback', true)
 await scenarioLegacy('legacy-arrives-later', false)
+await scenarioNoAdmit()
 await scenarioFetchFace()
 
 // Every scenario above asserts as it goes, so reaching this line means they all
