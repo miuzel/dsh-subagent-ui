@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Subagent Workspace",
+    "description": "Manage every subagent from the conversation header: search, filter by workspace or session, custom categories and hiding, batch actions, plus live status, output and usage. Shows lifecycle state and stop control for external agents such as Claude Code and Codex."
+  }
+}

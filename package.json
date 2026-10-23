@@ -3,6 +3,7 @@
   "version": "1.11.0-alpha",
   "type": "module",
   "description": "Searchable workspace subagent manager for DeepSeek Harness Web",
+  "icon": "./icon.svg",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -10,6 +11,8 @@
   },
   "files": [
     "lib",
+    "icon.svg",
+    "locale/*.json",
     "README.md",
     "README.zh.md",
     "LICENSE",
@@ -19,7 +22,9 @@
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./icon.svg": "./icon.svg",
+    "./locale/*.json": "./locale/*.json"
   },
   "dsh": {
     "bundle": {
