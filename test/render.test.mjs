@@ -12,7 +12,10 @@ import { fileURLToPath } from 'node:url'
 const CLIENT_BUNDLE = fileURLToPath(new URL('../lib/client.js', import.meta.url))
 
 globalThis.document = { querySelector: () => true, getElementById: () => null, createElement: () => ({ dataset: {}, style: {}, remove() {} }), head: { appendChild() {} } }
-globalThis.localStorage = { getItem: () => null, setItem() {} }
+// A real, inspectable preferences store: the deletion memory lives here (same
+// key the plugin uses for `archived`), so a mount/refresh sees what a delete wrote.
+let storedPrefs = null
+globalThis.localStorage = { getItem: () => storedPrefs, setItem: (k, v) => { storedPrefs = v } }
 globalThis.window = { confirm: () => true, alert: () => {}, prompt: () => null, innerWidth: 1200, innerHeight: 800 }
 let ledgerPayload = { ok: true, active: [], ended: [] }
 globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ledgerPayload })
@@ -62,7 +65,7 @@ const renderChild = (type, props) => {
 // mount the active float, whose rows are the manager's own row objects.
 const src = readFileSync(CLIENT_BUNDLE, 'utf8')
 const footer = "    return {inject:['sessions','slots','locale'],apply}"
-const scopeSrc = src.replace(footer, `${footer.slice(0, -1)}, ActiveFloat, catalogEntriesOf, modeMap, childModeOf}`)
+const scopeSrc = src.replace(footer, `${footer.slice(0, -1)}, ActiveFloat, catalogEntriesOf, modeMap, childModeOf, externalRowsOf, deletedExternalOf, EXTERNAL_REMOVED_LIMIT, externalRemovedCap, externalRemovedAdd}`)
 let api = null
 globalThis.window.__ModuleLoader__ = { load: ({ factory }) => { api = factory(id => id === 'react' ? React : { jsx: (t, p) => renderChild(t, p), jsxs: (t, p) => renderChild(t, p) }) } }
 new Function('window', scopeSrc)(globalThis.window)
@@ -105,13 +108,13 @@ let commitOptions = null
 let commitState = null
 // One full commit: render, run the effects that commit queued, and render once
 // more when an effect set component state (the poller's first response does).
-async function commit(next, options) {
+async function commit(next, options, fresh) {
   pendingCommit = false
-  const first = render(next, options)
+  const first = render(next, options, fresh)
   runEffects()
   // The poller's first response lands on a microtask; let it, then re-render.
   await new Promise(resolve => setTimeout(resolve, 5))
-  return pendingCommit ? render(next, options) : first
+  return pendingCommit ? render(next, options, false) : first
 }
 // Child components set state too; only the top-level cursor marks a commit.
 
@@ -246,6 +249,141 @@ assert.strictEqual(occurrences, 1, 'the external id appears once even though bot
 const ids = rowIds.length
 results.noDuplicates = ids
 
+// 8. A DELETED external child must not linger as a stub row. The host catalog is
+//    append-only (no removal event exists) and an external child has no Session,
+//    so the only fact that separates "deleted" from "running/ended/not yet
+//    started" is the browser's own record of the completed deletion. This is the
+//    regression guard for the reported bug: 3 catalog entries, 1 live child.
+// The plugin's own helpers, read out of the factory it returned (the harness only
+// widens the return object; the functions are the shipped ones).
+const externalRowsOf = api.externalRowsOf, deletedExternalOf = api.deletedExternalOf, EXTERNAL_REMOVED_LIMIT = api.EXTERNAL_REMOVED_LIMIT, externalRemovedCap = api.externalRemovedCap, externalRemovedAdd = api.externalRemovedAdd
+assert.ok(typeof externalRowsOf === 'function' && typeof externalRemovedCap === 'function', 'plugin helpers exported for direct assertions')
+const ROWS = view => view.nodes.filter(n => typeof (n.props || {}).className === 'string' && n.props.className.split(' ').includes('dsh-sam-row'))
+const stubFixture = entries => ({
+  byId: {
+    p1: parent,
+    alive: { id: 'alive', parentId: 'p1', origin: 'subagent', title: '活着的子代理', cwd: '/work', updatedAt: Date.now() },
+  },
+  current: 'p1',
+  projectionsBySession: { p1: { values: { subagentCatalog: entries } } },
+})
+const threeEntries = [
+  { id: 'alive', createdAt: 1, mode: 'continuable', label: '活着的子代理' },
+  { id: 'deleted-ext-1', createdAt: 2, mode: 'external', label: '已删的外部代理1' },
+  { id: 'deleted-ext-2', createdAt: 3, mode: 'external', label: '已删的外部代理2' },
+]
+// (a) NEGATIVE CONTROL, and the exact reported repro: with no deletion recorded
+//     the two external entries still render (3 rows) — proving the assertions
+//     below have teeth rather than passing on an already-broken fixture.
+storedPrefs = null
+cells = {}; childCells = new Map()
+ledgerPayload = { ok: true, active: [], ended: [] }
+let stubView = await commit(stubFixture(threeEntries), { open: true }, true)
+assert.strictEqual(ROWS(stubView).length, 3, 'control: 3 undeleted-but-catalogued rows (1 local + 2 external) without any deletion record')
+assert.ok(stubView.text.join(' ').includes('已删的外部代理1'), 'control: the deleted external entry renders while no deletion is recorded')
+// (b) The fix: the same state, with those two ids recorded as deleted (what
+//     deleteSubagent / batch-delete write on a successful host answer). The
+//     count must drop to the ONE live child, exactly as on a page refresh.
+storedPrefs = JSON.stringify({ removedExternal: ['deleted-ext-1', 'deleted-ext-2'] })
+stubView = await commit(stubFixture(threeEntries), { open: true }, true)
+const afterDeleteRows = ROWS(stubView)
+const afterDeleteText = stubView.text.join(' ')
+assert.strictEqual(afterDeleteRows.length, 1, 'only the live child renders; rows=' + afterDeleteRows.length)
+assert.ok(afterDeleteText.includes('活着的子代理'), 'the undeleted local child still renders')
+assert.ok(!afterDeleteText.includes('已删的外部代理1'), 'deleted external 1 is gone')
+assert.ok(!afterDeleteText.includes('已删的外部代理2'), 'deleted external 2 is gone')
+// The HEADER COUNTS (the closed-panel chip and the panel summary) are derived from
+// the same rows, so a deleted child must not be counted either.
+const closedAfterDelete = await commit(stubFixture(threeEntries), { open: false }, true)
+const chipAfterDelete = closedAfterDelete.text.join(' ')
+assert.ok(!chipAfterDelete.includes('0/3'), 'the header does not count the deleted external rows; chip=' + chipAfterDelete.slice(0, 60))
+assert.ok(afterDeleteText.includes('当前会话 1 个'), 'the panel summary counts 1; text=' + afterDeleteText.slice(0, 200))
+results.deletedExternal = { control: 3, afterDelete: afterDeleteRows.length, chip: true }
+// (c) REVERSE CONSTRAINT — no false kill. A deletion record must never hide a
+//     child that is (i) running right now (the id was re-delegated), (ii) ended
+//     with a measured edge, or (iii) catalogued with no edge at all (running or
+//     just started, which this page cannot see). Only (iv) really is deleted.
+storedPrefs = null
+cells = {}; childCells = new Map()
+const fourExternal = [
+  { id: 'ext-running', createdAt: 1, mode: 'external', label: '运行中的外部代理' },
+  { id: 'ext-ended', createdAt: 2, mode: 'external', label: '已结束的外部代理' },
+  { id: 'ext-quiet', createdAt: 3, mode: 'external', label: '刚启动的外部代理' },
+  { id: 'ext-gone', createdAt: 4, mode: 'external', label: '真正删除的外部代理' },
+]
+ledgerPayload = {
+  ok: true,
+  active: [{ runId: 'r-run', id: 'ext-running', provider: 'codex', parentId: 'p1', seq: 1, startedAt: Date.now() }],
+  ended: [{ runId: 'r-end', id: 'ext-ended', provider: 'claude-code', parentId: 'p1', seq: 2, startedAt: 1000, endedAt: 4000, stopReason: 'completed', paired: true, durationMs: 3000 }],
+}
+storedPrefs = JSON.stringify({ removedExternal: ['ext-gone'] })
+stubView = await commit(stubFixture(fourExternal), { open: true }, true)
+const reverseText = stubView.text.join(' ')
+assert.ok(reverseText.includes('运行中的外部代理'), 'a running external run is still shown')
+assert.ok(reverseText.includes('已结束的外部代理'), 'an ended external run is still shown')
+assert.ok(reverseText.includes('刚启动的外部代理'), 'an external run with no measured edge is still shown')
+assert.ok(!reverseText.includes('真正删除的外部代理'), 'the deleted external row is hidden')
+// The running run also outranks a stale deletion record for the SAME id (a
+// re-delegation reuses the catalog id), so deletion must never mask a live run.
+ledgerPayload = { ok: true, active: [{ runId: 'r-gone', id: 'ext-gone', provider: 'codex', parentId: 'p1', seq: 3, startedAt: Date.now() }], ended: [] }
+stubView = await commit(stubFixture(fourExternal), { open: true }, true)
+assert.ok(stubView.text.join(' ').includes('真正删除的外部代理'), 'a recorded deletion never hides a currently RUNNING child of the same id')
+// The predicate itself, unit-shaped: live/ended/unknown are all shown, and only
+// the recorded-and-not-running id is hidden.
+const shown = externalRowsOf(k => k, stubFixture(fourExternal), { 'ext-running': { status: 'running' }, 'ext-ended': { status: 'ended' }, 'ext-quiet': { status: 'unknown' } }, ['ext-running', 'ext-gone']).map(r => r.id)
+assert.deepStrictEqual(shown.sort(), ['ext-ended', 'ext-quiet', 'ext-running'], 'only the recorded, non-running id is excluded (a recorded RUNNING id stays); got=' + JSON.stringify(shown))
+assert.strictEqual(deletedExternalOf(['a'], { a: { status: 'running' } })('a'), false, 'running outranks a deletion record')
+assert.strictEqual(deletedExternalOf(['a'], { a: { status: 'ended' } })('a'), true, 'an ended child with a deletion record is hidden')
+assert.strictEqual(deletedExternalOf(undefined, undefined)('a'), false, 'no record => never hidden (and no crash)')
+results.noFalseKill = { running: true, ended: true, quiet: true, runningBeatsRecord: true }
+// (d) The memory is BOUNDED and self-cleaning: at most EXTERNAL_REMOVED_LIMIT
+//     entries, newest kept, oldest evicted; adding is idempotent and moves the id
+//     to the newest end; an id that has a Session again is dropped by the panel.
+assert.ok(EXTERNAL_REMOVED_LIMIT > 0 && EXTERNAL_REMOVED_LIMIT <= 2000, 'a sane cap exists: ' + EXTERNAL_REMOVED_LIMIT)
+const overfull = Array.from({ length: EXTERNAL_REMOVED_LIMIT + 25 }, (_, i) => `id-${i}`)
+const capped = externalRemovedCap(overfull)
+assert.strictEqual(capped.length, EXTERNAL_REMOVED_LIMIT, 'the list is capped at ' + EXTERNAL_REMOVED_LIMIT)
+assert.strictEqual(capped[0], 'id-25', 'the oldest entries are the ones evicted')
+assert.strictEqual(capped[capped.length - 1], 'id-' + (EXTERNAL_REMOVED_LIMIT + 24), 'the newest entry is kept')
+const dedup = externalRemovedAdd(externalRemovedAdd(['a', 'b'], 'a'), 'a')
+assert.deepStrictEqual(dedup, ['b', 'a'], 're-adding moves the id to the newest end instead of duplicating it')
+assert.strictEqual(externalRemovedAdd(capped, 'fresh').length, EXTERNAL_REMOVED_LIMIT, 'adding to a full list still obeys the cap')
+// Natural cleanup: once a recorded id has a Session again, a mount drops it.
+storedPrefs = JSON.stringify({ removedExternal: ['deleted-ext-1', 'deleted-ext-2'] })
+const revived = {
+  ...stubFixture(threeEntries),
+  byId: { ...stubFixture(threeEntries).byId, 'deleted-ext-1': { id: 'deleted-ext-1', parentId: 'p1', origin: 'subagent', title: '又活了的子代理', cwd: '/work', updatedAt: Date.now() } },
+}
+const pruned = await commit(revived, { open: true }, true)
+assert.strictEqual(ROWS(pruned).length, 2, 'the revived id renders once (from byId), the still-deleted one stays hidden; rows=' + ROWS(pruned).length)
+runEffects()
+const persisted = JSON.parse(storedPrefs || '{}')
+assert.deepStrictEqual(persisted.removedExternal, ['deleted-ext-2'], 'the record for an id that exists again was pruned; stored=' + storedPrefs)
+// The explicit clear control: offered while a deletion is recorded, and clicking
+// it empties the memory (the escape hatch for a wrong record).
+storedPrefs = JSON.stringify({ removedExternal: ['deleted-ext-1', 'deleted-ext-2'], filterCollapsed: false })
+const withMemory = await commit(stubFixture(threeEntries), { open: true }, true)
+const clearBtn = withMemory.nodes.filter(n => n.tag === 'button' && typeof (n.props || {}).className === 'string' && (n.props || {}).className.includes('dsh-sam-clear-removed'))
+assert.strictEqual(clearBtn.length, 1, 'a clear control is offered while deletions are recorded')
+clearBtn[0].props.onClick()
+// The click only queues the preference change; the commit effect is what writes
+// localStorage, so one more commit (a re-render of the same mount) persists it.
+await commit(stubFixture(threeEntries), { open: true })
+assert.deepStrictEqual(JSON.parse(storedPrefs || '{}').removedExternal, [], 'the clear control empties the memory; stored=' + storedPrefs)
+// With the memory cleared, the catalogued externals come back (honest: the host
+// still lists them) — the control is reversible, not destructive.
+const afterClear = await commit(stubFixture(threeEntries), { open: true }, true)
+assert.strictEqual(ROWS(afterClear).length, 3, 'clearing the memory restores the catalogued rows')
+results.bounded = { limit: EXTERNAL_REMOVED_LIMIT, dedup: true, pruned: true, cleared: true }
+// (e) One-shot / continuable behavior is untouched: their rows come from `byId`
+//     and a deletion record for a LOCAL id changes nothing about them.
+storedPrefs = JSON.stringify({ removedExternal: ['session-c1'] })
+cells = {}; childCells = new Map()
+const localRecorded = await commit(stateLocal, { open: true, asideAddressOf: () => 'dsh-resource://subagentchat/session/x?parent=p1&mode=continuable', openAside: () => true }, true)
+const localText = localRecorded.text.join(' ')
+assert.ok(localText.includes('local child'), 'a continuable row still renders regardless of the deletion memory')
+assert.strictEqual(localRecorded.nodes.filter(n => n.tag === 'button' && String((n.props || {}).children) === '◫').length, 1, 'its sidebar action is unchanged')
+results.localUnchanged = true
 // Every assertion above has already thrown by the time this line runs, so
 // reaching it means the harness passed: exit 0 explicitly, because the plugin's
 // pollers leave live timers behind and the event loop would otherwise never

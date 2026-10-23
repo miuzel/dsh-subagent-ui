@@ -263,6 +263,18 @@ export interface Prefs {
   tabs?: TabDef[]
   archived?: string[]
   archivedParents?: Record<string, unknown>
+  /*
+   * The one explicit removal fact on the client: child ids whose deletion THIS
+   * browser completed through the plugin's own delete route. The host's catalog
+   * is append-only (no removal event exists) and an external child has no
+   * Session to notice the disappearance through, so without this list a deleted
+   * external row could never be told apart from a live one. It lives next to
+   * `archived`, every id is written by the host's successful answer (never
+   * inferred), and it is bounded two ways: an id that regains a Session leaves
+   * it, and the list is capped at EXTERNAL_REMOVED_LIMIT entries, oldest first.
+   * A child the host's ledger reports running is still shown regardless.
+   */
+  removedExternal?: string[]
   showArchived?: boolean
   hideOneShot?: boolean
   hideOld?: boolean

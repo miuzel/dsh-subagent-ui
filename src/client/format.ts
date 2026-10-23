@@ -160,15 +160,28 @@ export const modeMap:(state:SessionState|undefined)=>Record<string, CatalogEntry
 //   still passes every "is it old" filter.
 // `running` stays false here; it is set by the caller from the lifecycle state,
 // because the host's own `activity` is a constant for these ids.
-export const externalRowsOf=(tr:Tr,state:SessionState|undefined,externalStates:ExternalStates)=>{
+//
+// Deletion is the one fact the catalog cannot express: its projection is
+// append-only, so a deleted child keeps its entry forever. `removedExternal` is
+// the browser's own record of a completed deletion (see Prefs.removedExternal)
+// and is the ONE signal consulted here — never `activity` (a constant for these
+// ids), never a time threshold. A child the ledger reports RUNNING right now is
+// still shown, because a live run outranks a past deletion of the same id.
+export const deletedExternalOf=(removedExternal:string[]|undefined,externalStates:ExternalStates|undefined)=>{const removed=new Set<string>(Array.isArray(removedExternal)?removedExternal:[]);return (id:string)=>removed.has(id)&&externalStates?.[id]?.status!=='running'}
+export const externalRowsOf=(tr:Tr,state:SessionState|undefined,externalStates:ExternalStates,removedExternal?:string[])=>{
   const byId=state?.byId||{}
   const rows:SubagentRow[]=[]
   const seen=new Set<string>()
+  const deleted=deletedExternalOf(removedExternal,externalStates)
   catalogParents(state).forEach(({parentId,entries})=>{
     const parent=byId[parentId]
     if(!parent)return
     entries.forEach(entry=>{
       if(entry.mode!=='external'||byId[entry.id]||seen.has(entry.id))return
+      // A child this browser deleted keeps its catalog record forever (the host
+      // projection is append-only) but must not come back as a stub row — unless
+      // the host is running it right now.
+      if(deleted(entry.id))return
       // A parent whose `origin` says subagent is itself a child; take the root so
       // the row groups with the workspace the operator sees.
       const root=rootSession(byId,parentId)
