@@ -27,6 +27,10 @@ let childCells = new Map()
 let openOnce = false
 const setters = []
 const effects = []
+// The factory body reads `document` as a free variable (the loader supplies its
+// globals that way), so the harness — which kept it only as `window.document` —
+// gives every boot the same stub in the module scope too.
+globalThis.window.document = globalThis.document
 const React = {
   useState: initial => {
     const index = cursor++
@@ -64,8 +68,31 @@ const renderChild = (type, props) => {
 // The scope helpers are read out of the same factory so the harness can also
 // mount the active float, whose rows are the manager's own row objects.
 const src = readFileSync(CLIENT_BUNDLE, 'utf8')
+// The same bundle DECODED (the loader wraps the built modules in one factory
+// whose body is plain JS), used only to build a CONTROL copy of the code as it
+// was before this attempt — see (b) below. Nothing here runs the decoded source
+// directly; the control is re-wrapped into a loader module and booted normally.
+const libSrc = (() => {
+  const before = globalThis.window.__ModuleLoader__
+  let factoryFn = null
+  globalThis.window.__ModuleLoader__ = { load: ({ factory }) => { factoryFn = factory } }
+  try {
+    new Function('window', src)(globalThis.window)
+  } finally {
+    globalThis.window.__ModuleLoader__ = before
+  }
+  const text = factoryFn && Function.prototype.toString.call(factoryFn)
+  if (!text) throw new Error('the bundle factory could not be decoded')
+  // `toString()` of an arrow factory is `(require) => { ... }`: take the BODY
+  // (outer braces), then drop the wrapper's OWN `return` of the module exports,
+  // so the text can be re-wrapped as `(require) => { <body> }` verbatim.
+  const body = text.slice(text.indexOf('{') + 1, text.lastIndexOf('}'))
+  const exportsReturn = body.lastIndexOf("    return {inject:['sessions','slots','locale'],apply}")
+  if (exportsReturn < 0) throw new Error('the decoded bundle has no module-exports return to strip')
+  return body.slice(0, exportsReturn) + 'return ' + body.slice(exportsReturn).replace(/^\s+return /, '')
+})()
 const footer = "    return {inject:['sessions','slots','locale'],apply}"
-const scopeSrc = src.replace(footer, `${footer.slice(0, -1)}, ActiveFloat, catalogEntriesOf, modeMap, childModeOf, externalRowsOf, deletedExternalOf, EXTERNAL_REMOVED_LIMIT, externalRemovedCap, externalRemovedAdd}`)
+const scopeSrc = src.replace(footer, `${footer.slice(0, -1)}, ActiveFloat, catalogEntriesOf, modeMap, childModeOf, externalRowsOf, deletedExternalOf, EXTERNAL_REMOVED_LIMIT, externalRemovedCap, externalRemovedAdd, sessionEntitiesOf, absentRowOf}`)
 let api = null
 globalThis.window.__ModuleLoader__ = { load: ({ factory }) => { api = factory(id => id === 'react' ? React : { jsx: (t, p) => renderChild(t, p), jsxs: (t, p) => renderChild(t, p) }) } }
 new Function('window', scopeSrc)(globalThis.window)
@@ -80,6 +107,42 @@ api.apply({
   slots: { inject: (slot, f) => { f() }, register: (config, component) => { registrations.push({ config, component }) } },
   get: () => undefined,
 })
+// Boot a copy of the bundle from its DECODED source, the way the first copy was
+// booted (loader shell -> factory -> apply on a fake sessions runtime). Used by
+// the negative control, which must run different SOURCE rather than a replaced
+// binding: the linker links every module into one scope, so the manager reads
+// the module-local `absentRowOf` and an export override on the live copy never
+// reaches it (measured; a stubbed control would prove nothing).
+function bootBundle(source, options) {
+  let runnerApi = null
+  // The loader is a free variable inside the wrapper module, not a property of
+  // `window` in this harness; passing it in makes the control copy independent
+  // of whatever the first boot left on `window`.
+  const loader = { load: ({ factory }) => { runnerApi = factory(id => id === 'react' ? React : { jsx: (t, p) => renderChild(t, p), jsxs: (t, p) => renderChild(t, p) }) } }
+  globalThis.window.__ModuleLoader__ = loader
+  try {
+    new Function('window', '__ModuleLoader__', `return function () { __ModuleLoader__.load({ factory: (require) => {${source}} }) }`)(globalThis.window, loader)()
+  } catch (error) {
+    throw new Error('control bundle: ' + (error && error.message) + '\n' + String((error && error.stack) || '').split('\n').slice(0, 6).join('\n'))
+  }
+  if (!runnerApi) throw new Error('control bundle did not call the loader')
+  assert.ok(runnerApi, 'the control bundle booted')
+  const controlDicts = {}
+  const controlRegistrations = []
+  runnerApi.__registrations = controlRegistrations
+  runnerApi.apply({
+    sessions: { list: { getSnapshot: () => ({ byId: state.byId, current: state.current }) }, binding: () => null },
+    effect: fn => { try { fn() } catch {} },
+    locale: { register: (ns, d) => { controlDicts[ns] = d } },
+    slots: { inject: (slot, f) => { f() }, register: (config, component) => { controlRegistrations.push({ config, component }) } },
+    get: () => undefined,
+  })
+  // The control is mounted into the SAME harness component pool, so it can be
+  // rendered through the same `commit`/`render` path as the shipped copy.
+  const controlManager = runnerApi.__registrations.find((r) => r.config.id === 'subagent-workspace-manager').component
+  return { api: runnerApi, dicts: controlDicts, manager: controlManager }
+}
+const zoomForbidden = null
 const zh = dicts['subagent-workspace-ui'].zh
 const en = dicts['subagent-workspace-ui'].en
 const manager = registrations.find(r => r.config.id === 'subagent-workspace-manager')
@@ -256,6 +319,7 @@ results.noDuplicates = ids
 //    regression guard for the reported bug: 3 catalog entries, 1 live child.
 // The plugin's own helpers, read out of the factory it returned (the harness only
 // widens the return object; the functions are the shipped ones).
+const sessionEntitiesOf = api.sessionEntitiesOf, absentRowOfGate = api.absentRowOf
 const externalRowsOf = api.externalRowsOf, deletedExternalOf = api.deletedExternalOf, EXTERNAL_REMOVED_LIMIT = api.EXTERNAL_REMOVED_LIMIT, externalRemovedCap = api.externalRemovedCap, externalRemovedAdd = api.externalRemovedAdd
 assert.ok(typeof externalRowsOf === 'function' && typeof externalRemovedCap === 'function', 'plugin helpers exported for direct assertions')
 const ROWS = view => view.nodes.filter(n => typeof (n.props || {}).className === 'string' && n.props.className.split(' ').includes('dsh-sam-row'))
@@ -384,6 +448,335 @@ const localText = localRecorded.text.join(' ')
 assert.ok(localText.includes('local child'), 'a continuable row still renders regardless of the deletion memory')
 assert.strictEqual(localRecorded.nodes.filter(n => n.tag === 'button' && String((n.props || {}).children) === '◫').length, 1, 'its sidebar action is unchanged')
 results.localUnchanged = true
+// 9. g-026 / att-003 — THE REPORTED BUG, on the operator's real data.
+//
+// The operator deleted subagents through the panel, reinstalled the plugin,
+// restarted `dsh web` and hard-refreshed, and the panel STILL listed 29 rows;
+// the tail ones are stubs ("unknown" model / turns / steps). Diagnosis (his
+// environment): the row comes from `byId`, the host rebuilds those entries from
+// the parent session's append-only log, and deletion only removes the child's
+// SESSION DIRECTORY, which the browser cannot look at. So the browser's own
+// `removedExternal` list is not the fact that matters — the HOST's answer is.
+//
+// What is asserted here, through the REAL manager component and the REAL bundle:
+//   (a) the reported repro — the host reports the child's directory gone and the
+//       row disappears (panel rows, panel summary AND the closed-panel header
+//       chip), while a child the host reports present stays;
+//   (b) NEGATIVE CONTROL against the shipped feature set: the SAME bundle with
+//       rung 2 disabled (`isAbsentRow` forced to false — i.e. the code as it was
+//       before this attempt) renders all three rows for the SAME host answer.
+//       That control is what proves the assertions have teeth.
+//   (c) the conservative arms — no answer, a failed probe, an `unavailable`
+//       root, a `partial` root, a present id, a malformed body: EVERY row shows;
+//   (d) a running child outweighs an `absent` answer (re-delegation);
+//   (e) one batched request for the whole candidate set (never one per row).
+const ENTITY_URL = '/api/dsh-subagent-workspace-ui/session-entity'
+// The fetched ground truth: an id => exists map, plus a mode for failures.
+let entityWorld = { mode: 'ok', exists: {}, present: [], absent: [], unavailable: [], root: 'read' }
+let entityCalls = []
+const baseFetch = globalThis.fetch
+globalThis.fetch = async (url, options) => {
+  const target = String(url)
+  if (!target.startsWith(ENTITY_URL)) return baseFetch(url, options)
+  entityCalls.push(target)
+  if (entityWorld.mode === 'throw') throw new Error('network down')
+  const ids = [...new URL(target, 'http://x').searchParams.getAll('id')]
+  const answer = {
+    ok: true,
+    version: 1,
+    root: entityWorld.root,
+    present: ids.filter((id) => entityWorld.exists[id] === true || (entityWorld.present || []).includes(id)),
+    absent: entityWorld.mode === 'unavailable' ? [] : ids.filter((id) => entityWorld.present.every((p) => p !== id) && entityWorld.exists[id] !== true),
+    unavailable: entityWorld.mode === 'unavailable' ? ids : [],
+  }
+  if (entityWorld.mode === 'malformed') return { ok: true, status: 200, json: async () => ({ ok: true }) }
+  return { ok: true, status: 200, json: async () => answer }
+}
+globalThis.fetch = globalThis.fetch
+// The gate every row passes through in the panel's external-row builder.
+// Exported for the unit-shaped assertions; the CONTROL does not stub it (the
+// bundle links the modules into one scope, so the panel never sees a replaced
+// binding — a real control has to run different SOURCE, see `withDisabledGate`).
+const preFix = api.absentRowOf
+const hostState = entries => ({
+  byId: { p1: parent, 'session-c1': { ...local, running: false } },
+  current: 'p1',
+  projectionsBySession: { p1: { values: { subagentCatalog: entries } } },
+})
+const mixed = [
+  { id: 'session-c1', createdAt: 1, mode: 'continuable', label: '真实存在的一次性子代理' },
+  { id: 'ext-present', createdAt: 2, mode: 'external', label: '目录仍在的外部代理' },
+  { id: 'ext-deleted-a', createdAt: 3, mode: 'external', label: '已删除的外部代理A' },
+  { id: 'ext-deleted-b', createdAt: 4, mode: 'external', label: '已删除的外部代理B' },
+]
+// The reported state: one child the host still has, two whose directories are
+// gone (his parent's catalog keeps all of them forever, append-only).
+const realWorld = () => ({
+  mode: 'ok',
+  root: 'read',
+  exists: { 'session-c1': true, 'ext-present': true },
+  present: ['ext-present'],
+  absent: ['ext-deleted-a', 'ext-deleted-b'],
+})
+// (a) THE FIX: the deleted rows are gone; the live ones stay — and so does the
+//     ROW COUNT everywhere it is shown.
+async function settled(next, options) {
+  storedPrefs = null
+  cells = {}; childCells = new Map()
+  ledgerPayload = { ok: true, active: [], ended: [] }
+  entityWorld = realWorld()
+  entityCalls = []
+  const first = await commit(next, { open: true, ...options }, true)
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  // The probe's effect stores the answer, which re-renders the panel.
+  return render(next, { open: true, ...options }, false)
+}
+let fixedView = await settled(hostState(mixed))
+let fixedText = fixedView.text.join(' ')
+const fixedRows = ROWS(fixedView)
+assert.ok(!fixedText.includes('已删除的外部代理A'), 'the deleted external row A is NOT rendered; text=' + fixedText.slice(0, 400))
+assert.ok(!fixedText.includes('已删除的外部代理B'), 'the deleted external row B is NOT rendered')
+assert.ok(fixedText.includes('目录仍在的外部代理'), 'the external row the host still has IS rendered')
+assert.ok(fixedText.includes('真实存在的一次性子代理'), 'the continuable row is untouched')
+assert.strictEqual(fixedRows.length, 2, 'exactly the two live rows remain; rows=' + fixedRows.length)
+assert.ok(fixedText.includes('显示 2/2'), 'the panel summary counts only the live rows; text=' + fixedText.slice(0, 200))
+const fixedChip = (await settled(hostState(mixed), { open: false })).text.join(' ')
+assert.ok(!fixedChip.includes('0/4') && !fixedChip.includes('/4'), 'the header does NOT count the deleted rows; chip=' + fixedChip.slice(0, 60))
+// The probe is ONE batched request naming every session-less external
+// candidate — never one request per row.
+assert.strictEqual(entityCalls.length, 1, 'one existence request for the whole panel; calls=' + JSON.stringify(entityCalls))
+const probed = new URL(entityCalls[0], 'http://x').searchParams.getAll('id').sort()
+// `session-c1` is listed without a Session in `byId` here, so it is a candidate
+// too — that is the second reported class of stub row (a child the host rebuilt
+// from the log whose directory is gone), and it is answered in the same batch.
+assert.deepStrictEqual(probed, ['ext-deleted-a', 'ext-deleted-b', 'ext-present', 'session-c1'], 'the batch names every catalog child without a Session (all four here); got=' + JSON.stringify(probed))
+results.hostEntityFix = { rows: fixedRows.length, batch: probed.length, deletedHidden: true, liveShown: true }
+
+// (b) NEGATIVE CONTROL: the SAME source with rung 2 disabled — `isAbsentRow`
+//     becomes the constant `false`, which is exactly the behavior of the code
+//     before this attempt (only rung 1, the browser's own record, can hide a
+//     row). It is run as a SECOND copy of the bundle, because the linker puts
+//     every module into one shared scope: replacing an exported binding on the
+//     first copy provably does not reach the manager (measured), so a stub over
+//     the live bundle would be a control that controls nothing.
+// The decoded bundle is the BUILT (type-erased) code, so the gate there has no
+// annotations. Anchor on the built text, not the TypeScript source.
+const GATE_MARK = 'const absentRowOf=(absent,externalStates)=>{'
+const gateAt = libSrc.indexOf(GATE_MARK)
+if (gateAt < 0) throw new Error('the control patch cannot find the shipped gate in the decoded bundle')
+const gateEnd = libSrc.indexOf('\n', gateAt)
+const CONTROL_SRC = libSrc.slice(0, gateAt) + 'const absentRowOf=(absent,externalStates)=>(id)=>false' + libSrc.slice(gateEnd)
+if (CONTROL_SRC === libSrc) throw new Error('the control patch changed nothing')
+const controlRun = await bootBundle(CONTROL_SRC, zoomForbidden)
+// (b2) The control is driven through the harness renderer with ITS manager.
+async function settledWith(component, next, options) {
+  storedPrefs = null
+  cells = {}; childCells = new Map()
+  ledgerPayload = { ok: true, active: [], ended: [] }
+  entityWorld = realWorld()
+  entityCalls = []
+  const t = (key, params) => {
+    const template = zh[key] !== undefined ? zh[key] : `<${key}>`
+    return params ? template.replace(/\{(\w+)\}/g, (_, name) => String(params[name] === undefined ? `{${name}}` : params[name])) : template
+  }
+  const run = (open) => {
+    cursor = 0
+    setters.length = 0
+    effects.length = 0
+    openOnce = open
+    const { open: _ignored, ...props } = options || {}
+    return collect(component({ t, useSessions: sel => sel(state), openChild: () => true, openSession: () => true, refresh: () => {}, setCatalogOpen: () => {}, sessionId: 'p1', actions: {}, ...props }))
+  }
+  state = next
+  run(Boolean(options && options.open !== false))
+  runEffects()
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  return render(next, { open: true, ...(options || {}) }, false) && run(Boolean(options && options.open !== false))
+}
+const controlView = await settledWith(controlRun.manager, hostState(mixed), { open: true })
+const controlText = controlView.text.join(' ')
+assert.strictEqual(ROWS(controlView).length, 4, 'CONTROL (pre-fix gate): every catalogued row renders; rows=' + ROWS(controlView).length)
+assert.ok(controlText.includes('已删除的外部代理A') && controlText.includes('已删除的外部代理B'), 'CONTROL (pre-fix gate): both deleted rows are back')
+const controlChip = (await settledWith(controlRun.manager, hostState(mixed), { open: false })).text.join(' ')
+assert.ok(controlChip.includes('0/4') || controlChip.includes('/4'), 'CONTROL: the header counts the deleted rows too; chip=' + controlChip.slice(0, 60))
+const restored = await settled(hostState(mixed))
+assert.strictEqual(ROWS(restored).length, 2, 'the shipped bundle (rung 2 on) removes them again')
+results.hostEntityControl = { preFixRows: 4, fixedRows: 2 }
+
+// (c) THE CONSERVATIVE ARMS. Every one of them must show EVERY row: a probe
+//     that cannot answer is never evidence of deletion.
+const conservative = [
+  ['probe throws', () => { entityWorld = { ...realWorld(), mode: 'throw' } }],
+  ['host says root unavailable', () => { entityWorld = { ...realWorld(), mode: 'unavailable' } }],
+  ['root partially readable', () => { entityWorld = { ...realWorld(), root: 'partial' } }],
+  ['malformed body', () => { entityWorld = { ...realWorld(), mode: 'malformed' } }],
+  ['host reports both present', () => { entityWorld = { mode: 'ok', root: 'read', exists: { 'session-c1': true, 'ext-present': true, 'ext-deleted-a': true, 'ext-deleted-b': true }, present: ['ext-present', 'ext-deleted-a', 'ext-deleted-b'] } }],
+]
+for (const [label, prepare] of conservative) {
+  storedPrefs = null
+  cells = {}; childCells = new Map()
+  ledgerPayload = { ok: true, active: [], ended: [] }
+  prepare()
+  const first = await commit(hostState(mixed), { open: true }, true)
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  const view2 = render(hostState(mixed), { open: true }, false)
+  const text2 = view2.text.join(' ')
+  assert.strictEqual(ROWS(view2).length, 4, `"${label}": all four rows must show; rows=` + ROWS(view2).length + ' first=' + ROWS(first).length)
+  assert.ok(text2.includes('已删除的外部代理A') || entityWorld.mode !== 'ok', `"${label}": rows are shown when the answer is not evidence`)
+}
+// The structural arms of the fold itself, unit-shaped: an answer that is not
+// `root: 'read'` never yields an id, and neither does junk.
+assert.deepStrictEqual([...sessionEntitiesOf([{ ok: true, root: 'unavailable', absent: ['x'] }])], [], 'unavailable root asserts nothing')
+assert.deepStrictEqual([...sessionEntitiesOf([{ ok: true, root: 'partial', absent: ['x'] }])], [], 'partial root asserts nothing')
+assert.deepStrictEqual([...sessionEntitiesOf([{ ok: false, root: 'read', absent: ['x'] }])], [], 'a refused answer asserts nothing')
+assert.deepStrictEqual([...sessionEntitiesOf([{ ok: true, root: 'read', absent: ['x'], present: ['x'] }])], [], 'a contradictory answer is not evidence')
+assert.deepStrictEqual([...sessionEntitiesOf([null, undefined, 7, 'x', {}, { root: 'read' }])], [], 'junk answers assert nothing')
+assert.deepStrictEqual([...sessionEntitiesOf([{ ok: true, root: 'read', absent: ['x', 42, ''], present: [] }])], ['x'], 'only non-empty string ids under a read root become absent')
+// The fold has its own CONTROL, run as a second copy of the bundle: the two
+// guards that make a failure non-evidence are removed one at a time, and the
+// fold must then claim a child absent from an answer that proves nothing.
+const FOLD_GUARD = "    if(answer.root!=='read')continue\n"
+assert.ok(libSrc.includes(FOLD_GUARD), 'the fold\'s root guard is where the control expects it')
+// The harness appends every helper it needs to the module-exports object, the
+// same way `scopeSrc` does for the shipped bundle. In the DECODED body that
+// object is a bare `return {…}` (the loader wrapper's indentation is gone).
+const EXPORT_LINE = "return {inject:['sessions','slots','locale'],apply}"
+const appendExports = (source) => {
+  const at = source.indexOf(EXPORT_LINE)
+  if (at < 0) throw new Error('the decoded bundle lost its module-exports line')
+  return source.slice(0, at) + EXPORT_LINE.slice(0, -1) + ',sessionEntitiesOf}' + source.slice(at + EXPORT_LINE.length)
+}
+const foldControl = bootBundle(appendExports(libSrc.replace(FOLD_GUARD, '')), null)
+assert.deepStrictEqual([...foldControl.api.sessionEntitiesOf([{ ok: true, root: 'unavailable', absent: ['x'] }])], ['x'], 'CONTROL: without the root guard an UNREADABLE root would hide x')
+const OK_GUARD = "    if(answer.ok===false)continue\n"
+assert.ok(libSrc.includes(OK_GUARD), 'the fold\'s ok guard is where the control expects it')
+const okControl = bootBundle(appendExports(libSrc.replace(OK_GUARD, '')), null)
+assert.deepStrictEqual([...okControl.api.sessionEntitiesOf([{ ok: false, root: 'read', absent: ['y'] }])], ['y'], 'CONTROL: without the ok guard a REFUSED answer would hide y')
+assert.deepStrictEqual([...sessionEntitiesOf([{ ok: false, root: 'read', absent: ['y'] }])], [], 'the shipped fold hides nothing for that answer')
+assert.strictEqual(absentRowOfGate(undefined, undefined)('x'), false, 'no memory => never hidden')
+assert.strictEqual(absentRowOfGate(new Set(['x']), { x: { status: 'running' } })('x'), false, 'a running child outranks an absent answer')
+assert.strictEqual(absentRowOfGate(new Set(['x']), { x: { status: 'ended' } })('x'), true, 'an ended, absent child is hidden')
+results.hostEntityConservative = { arms: conservative.length, allShown: true }
+
+// (a2) THE OPERATOR'S EXACT SHAPE: the stub rows live in `byId`, not in the
+//      external synthesis. His parent log names 37 children (all `continuable`)
+//      and only 13 of those directories still exist; the host rebuilds the other
+//      24 as `origin: 'subagent'` summaries with no model/turns/steps — the
+//      "未知（未缓存 未知 / 未知 / 未知）· 未知轮 · 未知步" rows he reported. The
+//      rows therefore come from the `byId` pass and the existence answer has to
+//      reach THAT pass too (asserted here by implication: the count and the
+//      labels below can only be produced by filtering `byId` rows).
+const liveChild = { id: 'session-live-1', parentId: 'p1', origin: 'subagent', title: '目录仍在的子代理', cwd: '/work', updatedAt: Date.now() }
+const byIdStubChild = id => ({ id, parentId: 'p1', origin: 'subagent', title: id, cwd: '/work', updatedAt: 1 })
+const byIdStubIds = ['session-stub-1', 'session-stub-2', 'session-stub-3']
+const byIdCatalog = [
+  { id: 'session-live-1', createdAt: 1, mode: 'continuable', label: '目录仍在的子代理' },
+  ...byIdStubIds.map((id, i) => ({ id, createdAt: 2 + i, mode: 'continuable', label: id })),
+]
+const byIdStubState = () => ({
+  byId: { p1: parent, 'session-live-1': liveChild, ...Object.fromEntries(byIdStubIds.map(id => [id, byIdStubChild(id)])) },
+  current: 'p1',
+  projectionsBySession: { p1: { values: { subagentCatalog: byIdCatalog } } },
+})
+// The GUIDE shape: a catalogued child with NO Session in byId whose directory is
+// gone. No browser memory names it, so only the host's answer can hide it.
+const ghostByIdState = () => ({
+  byId: { p1: parent, 'session-live-1': liveChild },
+  current: 'p1',
+  projectionsBySession: { p1: { values: { subagentCatalog: byIdCatalog } } },
+})
+const byIdWorld = () => ({ mode: 'ok', root: 'read', exists: { 'session-live-1': true }, present: ['session-live-1'], absent: byIdStubIds })
+const DEBUG_BYID = process.env.DEBUG_BYID === '1'
+// A direct read of what the panel PROBED, so a regression here names itself.
+const probeIds = element => {
+  const out = []
+  const walk = value => {
+    if (value === null || value === undefined) return
+    if (Array.isArray(value)) { value.forEach(walk); return }
+    if (typeof value !== 'object') return
+    const props = value.props || {}
+    for (const [k, v] of Object.entries(props)) if (k === 'ids' && Array.isArray(v)) out.push(...v)
+    if (props.children && Array.isArray(props.children)) for (const c of props.children) walk(c)
+    const kid = props.children
+    if (kid && typeof kid === 'object' && !Array.isArray(kid)) walk(kid)
+    walk(props.children)
+  }
+  walk(element)
+  return out
+}
+const renderByIdWorld = async (next, world, options) => {
+  storedPrefs = null
+  cells = {}; childCells = new Map()
+  ledgerPayload = { ok: true, active: [], ended: [] }
+  entityWorld = world()
+  entityCalls = []
+  await commit(next, { open: true, ...(options || {}) }, true)
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  return render(next, { open: true, ...(options || {}) }, false)
+}
+let byIdView = await renderByIdWorld(byIdStubState(), byIdWorld)
+let byIdText = byIdView.text.join(' ')
+assert.strictEqual(ROWS(byIdView).length, 1, 'REPORTED SHAPE: only the child whose directory exists renders; rows=' + ROWS(byIdView).length)
+assert.ok(byIdText.includes('目录仍在的子代理'), 'the existing child is shown')
+for (const id of byIdStubIds) assert.ok(!byIdText.includes(id), 'the stub row ' + id + ' is gone')
+const byIdChip = (await renderByIdWorld(byIdStubState(), byIdWorld, { open: false })).text.join(' ')
+assert.ok(!byIdChip.includes('/4'), 'the header no longer counts the stub rows; chip=' + byIdChip.slice(0, 60))
+assert.ok(byIdChip.includes('/1'), 'the header counts the one real child; chip=' + byIdChip.slice(0, 60))
+// The same answer hides a catalogued child that has no Session at all.
+const ghostByIdView = await renderByIdWorld(ghostByIdState(), byIdWorld)
+assert.strictEqual(ROWS(ghostByIdView).length, 1, 'a session-less catalogued child whose directory is gone is hidden too; rows=' + ROWS(ghostByIdView).length)
+// …and NONE of it happens without the existence rung: the pre-fix bundle renders
+// all four rows in both shapes (the control's teeth for the `byId` path).
+const byIdControl = await settledWith(controlRun.manager, byIdStubState(), { open: true })
+assert.strictEqual(ROWS(byIdControl).length, 4, 'CONTROL (pre-fix): all four byId rows render; rows=' + ROWS(byIdControl).length)
+// Conservative arms on the SAME byId shape: no answer => every stub row shows.
+for (const world of [
+  () => ({ ...byIdWorld(), mode: 'unavailable' }),
+  () => ({ ...byIdWorld(), mode: 'throw' }),
+  () => ({ ...byIdWorld(), root: 'partial' }),
+]) {
+  const view3 = await renderByIdWorld(byIdStubState(), world)
+  assert.strictEqual(ROWS(view3).length, 4, 'no usable answer => every byId row is shown; rows=' + ROWS(view3).length)
+}
+// A `byId` child the host still has always stays, even when the host does not
+// mention it at all (absent is a positive claim, never a default).
+// `present` is the host's honest answer for these (it does not know they are
+// stubs), so this arm says: a positive/present answer hides NOTHING — the row
+// comes back exactly as before rung 2 existed.
+const unmentioned = await renderByIdWorld(byIdStubState(), () => ({ mode: 'ok', root: 'read', exists: { 'session-live-1': true }, present: ['session-live-1', ...byIdStubIds], absent: [] }))
+assert.strictEqual(ROWS(unmentioned).length, 4, 'a `present` answer hides nothing — the rows come back')
+results.hostEntityByIdRows = { reported: 4, fixed: 1, ghost: 1, control: 4, conservative: 3 }
+
+// (d) A RE-DELEGATED id: the host says the directory is gone (an old run) while
+//     the ledger says it is RUNNING right now. The live run wins.
+entityWorld = realWorld()
+ledgerPayload = { ok: true, active: [{ runId: 'live-1', id: 'ext-deleted-a', provider: 'codex', parentId: 'p1', seq: 5, startedAt: Date.now() }], ended: [] }
+storedPrefs = null
+cells = {}; childCells = new Map()
+await commit(hostState(mixed), { open: true }, true)
+await new Promise((resolve) => setTimeout(resolve, 10))
+const redelegated = render(hostState(mixed), { open: true }, false)
+const redelegatedText = redelegated.text.join(' ')
+assert.ok(redelegatedText.includes('已删除的外部代理A'), 'a currently RUNNING child is shown even when its old directory is gone')
+assert.ok(redelegatedText.includes('运行中 · Codex'), 'and it is shown as running')
+assert.ok(!redelegatedText.includes('已删除的外部代理B'), 'the sibling that is not running stays hidden')
+ledgerPayload = { ok: true, active: [], ended: [] }
+results.hostEntityRunningWins = true
+
+// (e) The pre-existing browser memory is untouched by all of this: a recorded
+//     deletion still hides its id, and the clear control still restores the
+//     host-listed rows (rung 1 is additive, not replaced).
+storedPrefs = JSON.stringify({ removedExternal: ['ext-present'] })
+entityWorld = realWorld()
+cells = {}; childCells = new Map()
+await commit(hostState(mixed), { open: true }, true)
+await new Promise((resolve) => setTimeout(resolve, 10))
+const memoryView = render(hostState(mixed), { open: true }, false)
+const memoryText = memoryView.text.join(' ')
+assert.ok(!memoryText.includes('目录仍在的外部代理'), 'a browser-recorded deletion still hides its row (rung 1 unchanged)')
+assert.strictEqual(ROWS(memoryView).length, 1, 'only the continuable row is left; rows=' + ROWS(memoryView).length)
+results.hostEntityMemoryKept = true
+
 // Every assertion above has already thrown by the time this line runs, so
 // reaching it means the harness passed: exit 0 explicitly, because the plugin's
 // pollers leave live timers behind and the event loop would otherwise never

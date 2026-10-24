@@ -1,5 +1,5 @@
-import { externalStatesOf } from './format'
-import type { ExternalStates } from './types'
+import { externalStatesOf, sessionEntitiesOf } from './format'
+import type { ExternalStates, SessionEntities, SessionEntityAnswer } from './types'
 // The browser half of the external-agent channel. The host entry watches the
 // host's own `subagent/start` / `subagent/end` pair and serves it on one exact
 // route; this module polls that route and nothing else. Rules that keep the
@@ -21,6 +21,7 @@ import type { ExternalStates } from './types'
 const EXTERNAL_POLL_MS=2500
 const EXTERNAL_STATUS_URL='/api/dsh-subagent-workspace-ui/external-status'
 const EXTERNAL_STOP_URL='/api/dsh-subagent-workspace-ui/external-stop'
+const SESSION_ENTITY_URL='/api/dsh-subagent-workspace-ui/session-entity'
 export function useExternalStatus(enabled:boolean){
   const [payload,setPayload]=React.useState(null),[failed,setFailed]=React.useState(false)
   React.useEffect(()=>{
@@ -50,6 +51,65 @@ export function useExternalStatus(enabled:boolean){
   },[enabled])
   const states:ExternalStates=React.useMemo(()=>externalStatesOf(payload),[payload])
   return {states,failed}
+}
+// The existence probe. "Does this child still own a session directory?" is a
+// question only the host can answer, and it is the one fact that separates a
+// child this plugin deleted (its directory is gone, while the host's catalog —
+// append-only — keeps listing it) from a child that is merely not running.
+//
+// The conservative direction is NAMED in the type: the result is a SET of ids
+// that were POSITIVELY found absent, so every failure mode (route missing, 401,
+// network, unparsable body, malformed lists, an empty request) resolves to the
+// empty set — and an empty set hides nothing. There is no "deleted by default".
+//
+// Batching: one request names every candidate id as `?id=` (the GET above is
+// the one the ledger poll already makes; this route is fetched only when the
+// candidate set CHANGES, not per row and not per poll — the caller memoizes on
+// the joined id list, and once an id is known absent it stays in that set).
+const SESSION_ENTITY_BATCH=100
+const SESSION_ENTITY_CACHE_LIMIT=500
+export function useSessionEntities(ids:string[]){
+  const key=[...new Set((ids||[]).filter(id=>typeof id==='string'&&id))].sort().join(',')
+  const [absent,setAbsent]=React.useState<SessionEntities>(new Set)
+  React.useEffect(()=>{
+    if(!key)return
+    let alive=true
+    const wanted=key.split(',')
+    const fetchBatch=async batch=>{
+      const query=batch.map(id=>`id=${encodeURIComponent(id)}`).join('&')
+      const response=await fetch(`${SESSION_ENTITY_URL}?${query}`,{headers:{accept:'application/json'},cache:'no-store',credentials:'same-origin'})
+      if(!response.ok)throw new Error(`HTTP ${response.status}`)
+      return response.json()
+    }
+    const run=async()=>{
+      const answers:SessionEntityAnswer[]=[]
+      for(let at=0;at<wanted.length;at+=SESSION_ENTITY_BATCH){
+        const batch=wanted.slice(at,at+SESSION_ENTITY_BATCH)
+        try{
+          answers.push(await fetchBatch(batch))
+        }catch(error){
+          if(!alive)return
+          // One failed batch says nothing about it; the others still answer.
+          console.warn('subagent-workspace-ui: session existence is unavailable for one batch',error)
+        }
+      }
+      if(!alive)return
+      const found=sessionEntitiesOf(answers)
+      if(!found.size)return
+      // Newest answers win; the set is the browser's memory of "positively
+      // absent", bounded by the same cap the deletion memory uses.
+      setAbsent(previous=>{
+        const next=new Set<string>(previous)
+        for(const id of found){next.delete(id);next.add(id)}
+        const all=[...next]
+        return new Set<string>(all.slice(Math.max(0,all.length-SESSION_ENTITY_CACHE_LIMIT)))
+      })
+    }
+    const task=run()
+    if(task&&typeof task.catch==='function')task.catch(error=>console.warn('subagent-workspace-ui: session existence probe failed',error))
+    return()=>{alive=false}
+  },[key])
+  return absent
 }
 // One stop request. The host resolves the run itself (the browser never names a
 // parent) and reports one of a small set of outcomes; every non-success is

@@ -258,6 +258,7 @@ const ENDPOINTS = [
   { name: 'external-stop', method: 'POST' },
   { name: 'delete', method: 'POST' },
   { name: 'batch-delete', method: 'POST' },
+  { name: 'session-entity', method: 'GET' },
 ]
 
 const evidence = []
@@ -441,7 +442,10 @@ function mintCookie(pathname, port) {
 async function anonymousSuite(port) {
   const statuses = {}
   for (const { name, method } of ENDPOINTS) {
-    const r = await request(port, method, browserVisible(name), { body: method === 'POST' ? {} : undefined })
+    // `session-entity` names its ids in the query; without them it answers the
+    // `unavailable` arm, so one id is passed to keep the request well-formed.
+    const path = name === 'session-entity' ? `${browserVisible(name)}?id=probe-1` : browserVisible(name)
+    const r = await request(port, method, path, { body: method === 'POST' ? {} : undefined })
     statuses[name] = r.status
   }
   return statuses
@@ -455,7 +459,12 @@ async function authenticatedSuite(port, cookie) {
   const badJson = await request(port, 'POST', browserVisible('delete'), { ...authed, rawBody: '{not json' })
   const delMissing = await request(port, 'POST', browserVisible('delete'), { ...authed, body: {} })
   const batchMissing = await request(port, 'POST', browserVisible('batch-delete'), { ...authed, body: { items: [] } })
-  return { status, stopNoRun, stopGone, badJson, delMissing, batchMissing }
+  // The existence route, admitted: an id under a root this process never read.
+  // `DSH_HOME` here is the developer's own (or unset), so the answer is NOT
+  // asserted to be `absent` — only that the route answers the three-way shape.
+  const entityNamed = await request(port, 'GET', `${browserVisible('session-entity')}?id=probe-entity-1`, authed)
+  const entityNone = await request(port, 'GET', browserVisible('session-entity'), authed)
+  return { status, stopNoRun, stopGone, badJson, delMissing, batchMissing, entityNamed, entityNone }
 }
 
 function assertBodyUnchanged(suite) {
@@ -470,6 +479,16 @@ function assertBodyUnchanged(suite) {
   assert.deepStrictEqual([suite.badJson.status, suite.badJson.json.error], [400, 'invalid-json'], 'delete keeps its invalid-json 400')
   assert.deepStrictEqual([suite.delMissing.status, suite.delMissing.json.error], [400, 'missing-session-id'], 'delete keeps its missing-id 400')
   assert.deepStrictEqual([suite.batchMissing.status, suite.batchMissing.json.error], [400, 'missing-items'], 'batch-delete keeps its missing-items 400')
+  // The new route: admitted, three-way, and `absent` is never returned for a
+  // request that named nothing.
+  const entity = suite.entityNamed
+  assert.strictEqual(entity.status, 200, 'session-entity answers an admitted owner; body=' + entity.text)
+  assert.deepStrictEqual(entity.json.ok, true, 'session-entity is ok')
+  assert.strictEqual(typeof entity.json.root, 'string', 'session-entity names how much of the root it could read')
+  for (const field of ['present', 'absent', 'unavailable']) assert.ok(Array.isArray(entity.json[field]), `session-entity carries ${field} as a list`)
+  assert.strictEqual(entity.headers['cache-control'], 'no-store', 'session-entity is never cached')
+  assert.deepStrictEqual([suite.entityNone.status, suite.entityNone.json.error], [200, 'missing-ids'], 'a request naming no id asserts nothing')
+  assert.deepStrictEqual(suite.entityNone.json.absent, [], 'no ids => nothing is claimed absent')
 }
 
 // ------------------------------------------------------------ A: fetch face
@@ -523,7 +542,7 @@ async function scenarioFetchFace() {
   })
   try {
     const anonymous = await anonymousSuite(port)
-    assert.deepStrictEqual(anonymous, { 'external-status': 401, 'external-stop': 401, delete: 401, 'batch-delete': 401 }, `the channel must refuse all four without a credential, got ${JSON.stringify(anonymous)}`)
+    assert.deepStrictEqual(anonymous, { 'external-status': 401, 'external-stop': 401, delete: 401, 'batch-delete': 401, 'session-entity': 401 }, `the channel must refuse every endpoint without a credential, got ${JSON.stringify(anonymous)}`)
 
     const forged = await request(port, 'GET', browserVisible('external-status'), { cookie: 'dsh-forged=value' })
     const bogus = await request(port, 'GET', browserVisible('external-status'), { token: 'bogus' })
@@ -631,7 +650,7 @@ async function scenarioLegacy(label, provideWebServer) {
   const forged = {}
   try {
     const anonymous = await anonymousSuite(port)
-    assert.deepStrictEqual(anonymous, { 'external-status': 401, 'external-stop': 401, delete: 401, 'batch-delete': 401 }, `the fallback must refuse all four without a credential, got ${JSON.stringify(anonymous)}`)
+    assert.deepStrictEqual(anonymous, { 'external-status': 401, 'external-stop': 401, delete: 401, 'batch-delete': 401, 'session-entity': 401 }, `the fallback must refuse every endpoint without a credential, got ${JSON.stringify(anonymous)}`)
 
     // NEGATIVE CONTROL 1: this exact request answered 200 before the fix.
     const control = await request(port, 'GET', browserVisible('external-status'))
@@ -705,7 +724,7 @@ async function scenarioNoAdmit() {
   const forged = {}
   try {
     const anonymous = await anonymousSuite(port)
-    assert.deepStrictEqual(anonymous, { 'external-status': 404, 'external-stop': 404, delete: 404, 'batch-delete': 404 }, `no route may serve, got ${JSON.stringify(anonymous)}`)
+    assert.deepStrictEqual(anonymous, { 'external-status': 404, 'external-stop': 404, delete: 404, 'batch-delete': 404, 'session-entity': 404 }, `no route may serve, got ${JSON.stringify(anonymous)}`)
     for (const [variant, suffix] of [['all-as', 'v1.AAAA.BBBB'], ['garbage-payload', 'v1.YWJjZGVm.Z2hpamtsbW5vcA'], ['v2', 'v2.QUJDREVGL']]) {
       const res = await request(port, 'GET', browserVisible('external-status'), { cookie: `${exportedCookieName(`127.0.0.1:${port}`)}=${suffix}` })
       assert.strictEqual(res.status, 404, `a forged ${variant} cookie must not reach a service at all, got ${res.status}`)

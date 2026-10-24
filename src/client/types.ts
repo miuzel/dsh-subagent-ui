@@ -220,11 +220,39 @@ export interface ExternalRunEnd extends ExternalRun {
   durationMs?: number
 }
 
+/*
+ * The host's answer to "does this child still own a session directory", served
+ * by the plugin's host entry (`/api/dsh-subagent-workspace-ui/session-entity`).
+ * It is a three-way answer because two of its arms are not evidence of deletion:
+ * - `present`: at least one project directory holds the id (the child exists);
+ * - `absent`: the sessions root was read and NO directory holds the id (the
+ *   child was deleted — this is the arm a row may be hidden on);
+ * - `unavailable`: the root could not be read, the id could not be encoded, or
+ *   the host never reported it. NEVER evidence: the client shows the row.
+ * `root` says how much of the answer to trust: `read` (every project directory
+ * was listed), `partial` (some slug could not be listed, so every "absent" is
+ * downgraded to `unavailable` by the host), `unavailable` (nothing was read).
+ */
+export interface SessionEntityAnswer {
+  ok?: boolean
+  version?: number
+  root?: 'read' | 'partial' | 'unavailable' | string
+  present?: string[]
+  absent?: string[]
+  unavailable?: string[]
+  error?: string
+}
+
+/** The ids the client may hide: the host READ the root and found no directory. */
+export type SessionEntities = Set<string>
+
 export interface ExternalLedger {
   ok?: boolean
   version?: number
   active: ExternalRun[]
   ended: ExternalRunEnd[]
+  /* Folded existence answer for every id the ledger knows (status route only). */
+  entity?: SessionEntityAnswer
   at?: number
 }
 

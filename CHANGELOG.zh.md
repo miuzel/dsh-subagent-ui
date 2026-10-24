@@ -2,6 +2,12 @@
 
 `dsh-subagent-workspace-ui` 的全部版本变更记录，最新在前。本文件承接 README 迁出的完整历史（回溯至 v1.0.1）；英文版见 [`CHANGELOG.md`](https://github.com/miuzel/dsh-subagent-ui/blob/HEAD/CHANGELOG.md)（英文条目自 v1.3.2 起）。
 
+## v1.11.0
+
+- **修复：已删除的子代理重启后仍以 stub 行出现在管理面板（例如头部「子代理 0/29」、末尾数行写着「模型未知 · 未知轮 · 未知步」）**。根因分两段：① 面板的行来自 `byId`——宿主用**父会话日志**（`subagent/catalog` ＋ 子消息）重建出这些 `origin: 'subagent'` 摘要，而该日志是**只增不减**的；② 删除只移除子代理的**会话目录**与存储域记录，浏览器看不到目录，只能靠「本浏览器删过它」这条本地记忆，重装／重启／强刷之后这条记忆与现实无关。现在由**宿主**回答唯一能区分两者的事实：新增只读路由 `GET /api/dsh-subagent-workspace-ui/session-entity?id=…`（可批量、上限 500 个 id），用宿主自己的会话布局（`<DSH_HOME>/sessions/<project slug>/<encodeSegment(id)>/`，编码规则逐字复刻宿主 `encodeSegment`）回答 `present` / `absent` / `unavailable` 三态；`external-status` 同一次轮询里也会把它作为 `entity` 一并带回，因此**不增加请求次数**。前端只把「宿主确实读取了会话根目录、且该 id 没有目录」的 id 视为可隐藏项，其余一律照常显示——**探测失败、根目录不可读、某个项目目录列不出来（`root: 'partial'`）、端点缺失、回答残缺、同一 id 既 present 又 absent，全部落在「显示」这一侧**；运行中的子代理（生命周期事件判定）永远压过删除记忆。原 `removedExternal` 本地记忆保留，与新事实**叠加而非替代**。
+- **兼容性**：纯能力探测，不比较任何版本号；没有该路由的宿主上行为与 v1.10.0 逐字节相同（一次额外请求都不会发出——候选列表为空即不探测）。
+- **测试**：新增 `test/session-entity.test.mjs`（真实 `HostConnectionService` ＋ 宿主自己的 `dsh-session-persistence-jsonl` 作为**判据来源**：`findLog` 说存在 ⟺ 插件说 `present`；含缺根／不可读／部分不可列／乱码请求／不存在的编码等**不得误杀**用例，以及把编码换成 `encodeURIComponent` 后会误报 `absent` 的负向对照）；`test/render.test.mjs` 新增「宿主说要删的行不再渲染」及其关掉过滤即变红的对照、`byId` 里 stub 行同样被隐藏，以及任何探测失败都照常显示的 5 个保守分支。另加 `test/real-data.test.mjs`（默认跳过，`DSH_REAL_HOME=~/.dsh` 开启）：**只读复制**负责人真实 `~/.dsh` 到 `tmp/` 隔离目录后，用负责人自己的父会话 `session-a0f8ca99` 复演——catalog 37 个子代理、目录仍在 13 个、已消失 24 个，插件路由与宿主扫描器逐个一致，真实 `lib/client.js` 面板只渲染 13 行；分别关掉两处过滤都会让它变红。
+
 ## v1.10.0
 
 - **功能：子代理会话内可预览 markdown 格式的提示词**。子代理会话收到的往往是一整篇结构化 markdown（任务书、评审要求、核查清单），此前只能看官方原文。现在每条用户消息在官方操作行里多一个 `原文` / `预览` 切换：`预览` 把该消息的原始文本**按 markdown 渲染**成块，`原文` 一键切回官方渲染，块内的「原文」按钮固定在块**右上角**（折叠时旁边才是「展开」）。渲染器**完全自研**——标题、嵌套有序/无序列表、粗体斜体、行内代码、带语言标注的围栏代码、嵌套引用块——且**全部用文本节点创建**：不引第三方 markdown 库、不用 `dangerouslySetInnerHTML`、不用 `innerHTML`，只有目标是 `http(s)` 或相对路径的链接才成为链接，`javascript:` / `data:` 与注入的标签一律保持惰性文本。超长正文默认折叠、`展开` / `收起` 可切换（20 000 字符量级仍保持可交互）。官方 `conversation.chat.node` 渲染器**不被接管**：插件只是在同一槽位追加一个**无头单元**，宿主改动该槽最多损失这一个单元、而不会影响对话；非子代理会话完全不注入任何元素。

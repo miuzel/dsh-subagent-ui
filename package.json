@@ -1,6 +1,6 @@
 {
   "name": "dsh-subagent-workspace-ui",
-  "version": "1.11.0-alpha",
+  "version": "1.11.0",
   "type": "module",
   "description": "Searchable workspace subagent manager for DeepSeek Harness Web",
   "icon": "./icon.svg",
@@ -50,7 +50,7 @@
     "verify:build": "node scripts/verify-build.mjs",
     "typecheck": "tsc --noEmit",
     "check": "node scripts/build.mjs && tsc --noEmit && node --check lib/index.js && node scripts/verify-fresh.mjs",
-    "test": "node test/render.test.mjs && node test/purge.test.mjs && node test/purge-panel.test.mjs && node test/auth.test.mjs"
+    "test": "node test/render.test.mjs && node test/session-entity.test.mjs && node test/purge.test.mjs && node test/purge-panel.test.mjs && node test/auth.test.mjs"
   },
   "devDependencies": {
     "sucrase": "^3.35.1",

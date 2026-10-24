@@ -1,4 +1,4 @@
-import type { Tr, SessionSummary, SessionState, CatalogEntry, SubagentRow, CwdLike, TokenUsage, SubagentMode, ExternalState, ExternalStates, ExternalLedger } from './types'
+import type { Tr, SessionSummary, SessionState, CatalogEntry, SubagentRow, CwdLike, TokenUsage, SubagentMode, ExternalState, ExternalStates, ExternalLedger, SessionEntities } from './types'
 export const age=(tr:Tr,stamp:number)=>{const seconds=Math.max(0,Math.floor((Date.now()-(stamp||Date.now()))/1000));if(seconds<60)return tr('age.sAgo',{s:seconds});const minutes=Math.floor(seconds/60);if(minutes<60)return tr('age.mAgo',{m:minutes});const hours=Math.floor(minutes/60);if(hours<24)return tr('age.hmAgo',{h:hours,m:minutes%60});return tr('age.dAgo',{d:Math.floor(hours/24)})}
 // The official cache-hit share formatter, ported expression-for-expression from
 // the host chat client (`@deepseek-ai/dsh-client-ui-chat/lib/client.js`:
@@ -168,11 +168,62 @@ export const modeMap:(state:SessionState|undefined)=>Record<string, CatalogEntry
 // ids), never a time threshold. A child the ledger reports RUNNING right now is
 // still shown, because a live run outranks a past deletion of the same id.
 export const deletedExternalOf=(removedExternal:string[]|undefined,externalStates:ExternalStates|undefined)=>{const removed=new Set<string>(Array.isArray(removedExternal)?removedExternal:[]);return (id:string)=>removed.has(id)&&externalStates?.[id]?.status!=='running'}
-export const externalRowsOf=(tr:Tr,state:SessionState|undefined,externalStates:ExternalStates,removedExternal?:string[])=>{
+// ------------------------------------------------------------------ existence
+// THE FACT the two readers below are built on, folded once from the host's
+// answers (`session-entity`, one batch per candidate set; also folded into the
+// ledger poll as `entity`). A child id lands in this set ONLY when the host said,
+// for a root it could actually READ, that no project directory holds it — i.e.
+// the child's session directory is gone because this plugin deleted it. Every
+// other arm (root unreadable, one slug unlistable, an id the host could not
+// encode, an id nobody asked about, an answer with no lists at all, a malformed
+// payload) keeps the id OUT of the set, and an id outside the set is always
+// shown. "Probe failed => show the row" is therefore a property of the data
+// structure, not a branch somebody has to remember to write.
+export const sessionEntitiesOf=(answers:unknown)=>{
+  const absent=new Set<string>()
+  const present=new Set<string>()
+  const list=Array.isArray(answers)?answers:[answers]
+  for(const answer of list){
+    if(!answer||typeof answer!=='object')continue
+    // An `ok:false` answer is a refusal, never evidence of deletion.
+    if(answer.ok===false)continue
+    // Only a root the host could read supports an "absent" verdict; `partial`
+    // is downgraded by the host already, and `unavailable`/missing root is
+    // treated as "nothing was read".
+    if(answer.root!=='read')continue
+    const gone=Array.isArray(answer.absent)?answer.absent:[]
+    const there=Array.isArray(answer.present)?answer.present:[]
+    for(const id of there){if(typeof id==='string'&&id)present.add(id)}
+    for(const id of gone){if(typeof id==='string'&&id)absent.add(id)}
+  }
+  // A contradictory answer (the same id in both lists) is not evidence: show it.
+  for(const id of present)absent.delete(id)
+  return absent
+}
+// The ONE rule for synthesizing an "existence-filtered" row:
+// - `absent` (host read the root, no directory) AND not running right now =>
+//   hide. A live lifecycle edge outranks that memory, so a re-delegated id is
+//   never masked;
+// - anything else => show. This is the default for every row the host did not
+//   or could not answer about.
+export const absentRowOf=(absent:SessionEntities|undefined,externalStates:ExternalStates|undefined)=>{const gone=absent instanceof Set?absent:new Set<string>();return (id:string)=>gone.has(id)&&externalStates?.[id]?.status!=='running'}
+// The rows that `byId` can never produce, synthesized from the catalog. Two
+// independent reasons may hide one, and either is enough:
+// 1. this browser's own deletion record (`removedExternal`, a list in prefs) —
+//    the pre-existing signal, kept so behavior is additive;
+// 2. the HOST's existence answer (`absent`, a set of ids the host positively
+//    found with no session directory left). This is the rung that repairs the
+//    reported bug: after the operator reinstalls/restarts/refreshes, the
+//    browser-local record of an old deletion is not what has to be trusted —
+//    the host says, for a root it read, that the child's directory is gone.
+// Both are overridden by a live lifecycle edge: a child the ledger reports
+// RUNNING is shown no matter what either memory says.
+export const externalRowsOf=(tr:Tr,state:SessionState|undefined,externalStates:ExternalStates,removedExternal?:string[],absent?:SessionEntities)=>{
   const byId=state?.byId||{}
   const rows:SubagentRow[]=[]
   const seen=new Set<string>()
   const deleted=deletedExternalOf(removedExternal,externalStates)
+  const gone=absentRowOf(absent,externalStates)
   catalogParents(state).forEach(({parentId,entries})=>{
     const parent=byId[parentId]
     if(!parent)return
@@ -180,8 +231,11 @@ export const externalRowsOf=(tr:Tr,state:SessionState|undefined,externalStates:E
       if(entry.mode!=='external'||byId[entry.id]||seen.has(entry.id))return
       // A child this browser deleted keeps its catalog record forever (the host
       // projection is append-only) but must not come back as a stub row — unless
-      // the host is running it right now.
+      // the host is running it right now (rung 1).
       if(deleted(entry.id))return
+      // A child the host reports as having no session directory at all is gone
+      // for real (rung 2) — again unless it is running right now.
+      if(gone(entry.id))return
       // A parent whose `origin` says subagent is itself a child; take the root so
       // the row groups with the workspace the operator sees.
       const root=rootSession(byId,parentId)

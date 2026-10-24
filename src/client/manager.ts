@@ -1,6 +1,6 @@
 import { DAY, PAGE, key, defaultTabs, DEFAULT_LIGHT_BG, DEFAULT_DARK_BG, load, EXTERNAL_REMOVED_LIMIT, externalRemovedAdd, externalRemovedCap } from './bootstrap'
-import { age, title, short, workspace, modeLabel, promptPreview, statsLine, statsUsageTitle, rootSession, modeMap, childModeOf, highlight, modeModelLine, asideButton, terminalClass, terminalTitle, isExternalRow, externalEngineName, externalStatusText, externalStatusTitle, externalDotClass, externalStopTargetOf, externalRowsOf, deletedExternalOf } from './format'
-import { useExternalStatus, requestExternalStop } from './external'
+import { age, title, short, workspace, modeLabel, promptPreview, statsLine, statsUsageTitle, rootSession, modeMap, childModeOf, highlight, modeModelLine, asideButton, terminalClass, terminalTitle, isExternalRow, externalEngineName, externalStatusText, externalStatusTitle, externalDotClass, externalStopTargetOf, externalRowsOf, deletedExternalOf, absentRowOf, catalogParents } from './format'
+import { useExternalStatus, requestExternalStop, useSessionEntities } from './external'
 import { ActiveFloat } from './active-float'
 import { LiveOutput } from './live-output'
 import { liveBindingFor, retainClear, retainDeclare, continueFaceFor, acquirePromptFace } from './retain'
@@ -38,7 +38,26 @@ export function Manager({t:tr,useSessions,openChild,openSession,refresh,setCatal
   // The external-agent channel. `externalHasRows` is the demand signal: only a
   // catalog row with mode 'external' starts the poller, so a host without
   // external providers (and every dsh before 0.2.1) never issues a request.
-  const modes=React.useMemo(()=>modeMap(state),[state]),externalHasRows=React.useMemo(()=>{for(const id of Object.keys(modes)){if(modes[id]?.mode==='external')return true}return false},[modes]),externalChannel=useExternalStatus(externalHasRows),externalStates=externalChannel.states,removedExternalNow=externalRemovedCap(prefs.removedExternal),removedExternalKey=removedExternalNow.join(','),externalRunningKey=Object.keys(externalStates).filter(id=>externalStates[id]?.status==='running').join(','),subagentRows=React.useMemo<SubagentRow[]>(()=>{const byId=state.byId,rows:SubagentRow[]=Object.values(byId).filter(s=>s.origin==='subagent').map(s=>{const catalog=modes[s.id],mode=childModeOf(s,catalog),external=mode==='external'?externalStates[s.id]:undefined;
+  const modes=React.useMemo(()=>modeMap(state),[state]),externalHasRows=React.useMemo(()=>{for(const id of Object.keys(modes)){if(modes[id]?.mode==='external')return true}return false},[modes]),externalChannel=useExternalStatus(externalHasRows),externalStates=externalChannel.states,removedExternalNow=externalRemovedCap(prefs.removedExternal),removedExternalKey=removedExternalNow.join(','),externalRunningKey=Object.keys(externalStates).filter(id=>externalStates[id]?.status==='running').join(',')
+  // The existence probe. Its candidates are every id a parent catalog names —
+  // external children (which have no Session at all) AND continuable/one-shot
+  // children that are listed while no Session of theirs is in `byId`. The second
+  // group is not hypothetical: the host rebuilds a `byId` entry from the parent's
+  // append-only log while it has nothing better, which is exactly how a child
+  // whose session directory is gone keeps reappearing as a stub row. A child that
+  // still HAS a Session never needs the answer (`byId` decides it), so the filter
+  // keeps the request to what the browser cannot decide itself.
+  const externalCandidates=React.useMemo(()=>{const ids:string[]=[],seen=new Set<string>()
+    catalogParents(state).forEach(({entries})=>{entries.forEach(entry=>{if(seen.has(entry.id))return;seen.add(entry.id);ids.push(entry.id)})})
+    return ids
+  },[state]),externalCandidatesKey=externalCandidates.join(',')
+  // Demand is the candidate list itself: no catalogued child => no request, so a
+  // host without subagents (and every dsh before 0.2.1) still costs zero. A host
+  // that has the route but could not read its sessions root answers the
+  // `unavailable` arm, which folds to the empty set — i.e. every row is shown.
+  // The id list is memoized so the effect only re-runs when the candidate SET
+  // changes, never once per poll or per row; the host answers a batch per call.
+  const absentExternal=useSessionEntities(externalCandidates),subagentRows=React.useMemo<SubagentRow[]>(()=>{const byId=state.byId,absentChild=absentRowOf(absentExternal,externalStates),rows:SubagentRow[]=Object.values(byId).filter(s=>s.origin==='subagent').filter(s=>!absentChild(s.id)||s.running===true).map(s=>{const catalog=modes[s.id],mode=childModeOf(s,catalog),external=mode==='external'?externalStates[s.id]:undefined;
     // For an external child the host's `running` is a constant (there is no
     // Session to look up), so the measured lifecycle edge is the only thing that
     // may set it; an unknown edge leaves the row not running rather than
@@ -48,8 +67,8 @@ export function Manager({t:tr,useSessions,openChild,openSession,refresh,setCatal
   // Session-less external executions are appended here: they exist only in the
   // parent's catalog, so the `byId` pass above can never produce them (see
   // externalRowsOf). Their `running` comes from the measured lifecycle edge.
-    return [...rows,...externalRowsOf(tr,state,externalStates,removedExternalNow).map(r=>({...r,running:r.external?.status==='running'}))]
-  },[state,modes,externalStates,removedExternalKey,externalRunningKey,tr]),allRows=React.useMemo(()=>{if(!open)return [];const rawTerm=query.trim().toLocaleLowerCase(),idOnly=rawTerm.startsWith('id:'),term=idOnly?rawTerm.slice(3).trim():rawTerm;return subagentRows.filter(s=>{if(workspaceKey&&s.parentCwd!==workspaceKey)return false;if(selectedSession!=='all'&&s.parentId!==selectedSession)return false;const unfiltered=tab==='all';if(!prefs.showArchived&&archived.has(s.id))return false;if(prefs.hideOneShot&&s.mode==='one-shot')return false;if(s.mode==='external')return true;if(!unfiltered&&prefs.hideOld&&!s.running&&Date.now()-s.updatedAt>(prefs.oldDays||30)*DAY)return false;const custom=tabs.find(t=>t.id===tab);if(custom?.regex==='__OTHER__'){const matched=tabs.some(t=>!['filtered','all','other'].includes(t.id)&&t.regex&&(()=>{try{return new RegExp(t.regex,'i').test(s.name)}catch{return false}})());if(matched)return false}else if(custom?.regex&&custom.regex!=='__ALL__'){try{if(!new RegExp(custom.regex,'i').test(s.name))return false}catch{return false}}return !term||`${idOnly?`${s.id} ${s.parentId||''}`:`${s.name} ${title(s)} ${workspace(tr,s)}`}`.toLocaleLowerCase().includes(term)}).sort((a,b)=>{const ar=recentIds.indexOf(a.id),br=recentIds.indexOf(b.id);return ar!==br?(ar<0?1:br<0?-1:ar-br):a.running!==b.running?(b.running?1:-1):sort==='title'?a.name.localeCompare(b.name):sort==='type'?modeLabel(tr,a.mode).localeCompare(modeLabel(tr,b.mode)):b.updatedAt-a.updatedAt})},[open,subagentRows,query,sort,prefs,scope,currentCwd,currentId,scopeDetail,workspaceKey,selectedSession,tab,tabs,recentIds,tr])
+    return [...rows,...externalRowsOf(tr,state,externalStates,removedExternalNow,absentExternal).map(r=>({...r,running:r.external?.status==='running'}))]
+  },[state,modes,externalStates,removedExternalKey,externalRunningKey,externalCandidatesKey,absentExternal,tr]),allRows=React.useMemo(()=>{if(!open)return [];const rawTerm=query.trim().toLocaleLowerCase(),idOnly=rawTerm.startsWith('id:'),term=idOnly?rawTerm.slice(3).trim():rawTerm;return subagentRows.filter(s=>{if(workspaceKey&&s.parentCwd!==workspaceKey)return false;if(selectedSession!=='all'&&s.parentId!==selectedSession)return false;const unfiltered=tab==='all';if(!prefs.showArchived&&archived.has(s.id))return false;if(prefs.hideOneShot&&s.mode==='one-shot')return false;if(s.mode==='external')return true;if(!unfiltered&&prefs.hideOld&&!s.running&&Date.now()-s.updatedAt>(prefs.oldDays||30)*DAY)return false;const custom=tabs.find(t=>t.id===tab);if(custom?.regex==='__OTHER__'){const matched=tabs.some(t=>!['filtered','all','other'].includes(t.id)&&t.regex&&(()=>{try{return new RegExp(t.regex,'i').test(s.name)}catch{return false}})());if(matched)return false}else if(custom?.regex&&custom.regex!=='__ALL__'){try{if(!new RegExp(custom.regex,'i').test(s.name))return false}catch{return false}}return !term||`${idOnly?`${s.id} ${s.parentId||''}`:`${s.name} ${title(s)} ${workspace(tr,s)}`}`.toLocaleLowerCase().includes(term)}).sort((a,b)=>{const ar=recentIds.indexOf(a.id),br=recentIds.indexOf(b.id);return ar!==br?(ar<0?1:br<0?-1:ar-br):a.running!==b.running?(b.running?1:-1):sort==='title'?a.name.localeCompare(b.name):sort==='type'?modeLabel(tr,a.mode).localeCompare(modeLabel(tr,b.mode)):b.updatedAt-a.updatedAt})},[open,subagentRows,query,sort,prefs,scope,currentCwd,currentId,scopeDetail,workspaceKey,selectedSession,tab,tabs,recentIds,tr])
   const deferredSubagentRows=React.useDeferredValue(subagentRows),activeRows=React.useMemo(()=>subagentRows.filter(s=>s.running).filter(s=>(!currentCwd||s.parentCwd===currentCwd)&&(prefs.showArchived||!archived.has(s.id))&&(!prefs.hideOneShot||s.mode!=='one-shot')).sort((a,b)=>b.updatedAt-a.updatedAt),[subagentRows,currentCwd,prefs,archived])
   // Stopping an external run goes through the host entry (its ledger resolves the
   // parent from the lifecycle edge and calls the host's own `interrupt`), so it
