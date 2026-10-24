@@ -66,9 +66,22 @@ export function useExternalStatus(enabled:boolean){
 // the one the ledger poll already makes; this route is fetched only when the
 // candidate set CHANGES, not per row and not per poll — the caller memoizes on
 // the joined id list, and once an id is known absent it stays in that set).
+//
+// The `phase` argument is the SECOND trigger, and it exists because the
+// candidate list alone cannot express the one event that makes a stale answer
+// wrong: a deletion performed by this panel. Deleting removes the child's
+// directory but changes nothing the browser can see (`byId` and the append-only
+// catalog are rebuilt by the host from the parent's log, so the key of every
+// candidate id is unchanged), so a probe keyed only on ids would keep answering
+// with the pre-deletion verdict until the panel was reopened — i.e. remounted.
+// The caller therefore bumps a counter once a delete is CONFIRMED by the host,
+// and the same batched request is replayed over the CURRENT candidate set only
+// (no extra ids, no per-row request, no timer). Re-probing cannot make a row
+// disappear on its own: every failure mode still folds to "show" (see
+// sessionEntitiesOf), so a replay can only ever confirm what the host now says.
 const SESSION_ENTITY_BATCH=100
 const SESSION_ENTITY_CACHE_LIMIT=500
-export function useSessionEntities(ids:string[]){
+export function useSessionEntities(ids:string[],phase?:number){
   const key=[...new Set((ids||[]).filter(id=>typeof id==='string'&&id))].sort().join(',')
   const [absent,setAbsent]=React.useState<SessionEntities>(new Set)
   React.useEffect(()=>{
@@ -108,7 +121,7 @@ export function useSessionEntities(ids:string[]){
     const task=run()
     if(task&&typeof task.catch==='function')task.catch(error=>console.warn('subagent-workspace-ui: session existence probe failed',error))
     return()=>{alive=false}
-  },[key])
+  },[key,phase])
   return absent
 }
 // One stop request. The host resolves the run itself (the browser never names a

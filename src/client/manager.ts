@@ -32,7 +32,7 @@ function pinChatViewTab(sessionId:string){
   setTimeout(tryPin,0)
 }
 export function Manager({t:tr,useSessions,openChild,openSession,refresh,setCatalogOpen,sessionId,actions,asideAddressOf,openAside}:ManagerProps){
-  const state=useSessions(s=>s,(a,b)=>a?.byId===b?.byId&&a?.subagentsByParent===b?.subagentsByParent&&a?.projectionsBySession===b?.projectionsBySession&&a?.current===b?.current),[open,setOpen]=React.useState(false),[query,setQuery]=React.useState(''),[grouping,setGrouping]=React.useState('session'),[sort,setSort]=React.useState('recent'),[prefs,setPrefs]=React.useState<Prefs>(load),[limit,setLimit]=React.useState(PAGE),[tab,setTab]=React.useState('all'),[scope,setScope]=React.useState('currentWorkspace'),[filterOpen,setFilterOpen]=React.useState(false),[activeOpen,setActiveOpen]=React.useState(true),[scopeDetail,setScopeDetail]=React.useState(''),[sessionScope,setSessionScope]=React.useState(''),[recentIds,setRecentIds]=React.useState<string[]>([]),[batchMode,setBatchMode]=React.useState(false),[selectedIds,setSelectedIds]=React.useState<Set<string>>(new Set),[lastSelectedIndex,setLastSelectedIndex]=React.useState(-1),[lastSelectedAction,setLastSelectedAction]=React.useState<boolean|null>(null),[oldHours,setOldHours]=React.useState<number|null>(null),[newAgents,setNewAgents]=React.useState<{id:string;name:string}[]>([]),[floatHidden,setFloatHidden]=React.useState(false),[stoppingIds,setStoppingIds]=React.useState<Set<string>>(new Set),[continuingIds,setContinuingIds]=React.useState<Set<string>>(new Set),[manualLoadedIds,setManualLoadedIds]=React.useState<Set<string>>(new Set),[extStopError,setExtStopError]=React.useState(''),runningSeen=React.useRef(false),runningIdsSeen=React.useRef<Set<string>>(new Set),noticeTimers=React.useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map)
+  const state=useSessions(s=>s,(a,b)=>a?.byId===b?.byId&&a?.subagentsByParent===b?.subagentsByParent&&a?.projectionsBySession===b?.projectionsBySession&&a?.current===b?.current),[open,setOpen]=React.useState(false),[query,setQuery]=React.useState(''),[grouping,setGrouping]=React.useState('session'),[sort,setSort]=React.useState('recent'),[prefs,setPrefs]=React.useState<Prefs>(load),[limit,setLimit]=React.useState(PAGE),[tab,setTab]=React.useState('all'),[scope,setScope]=React.useState('currentWorkspace'),[filterOpen,setFilterOpen]=React.useState(false),[activeOpen,setActiveOpen]=React.useState(true),[scopeDetail,setScopeDetail]=React.useState(''),[sessionScope,setSessionScope]=React.useState(''),[recentIds,setRecentIds]=React.useState<string[]>([]),[batchMode,setBatchMode]=React.useState(false),[selectedIds,setSelectedIds]=React.useState<Set<string>>(new Set),[lastSelectedIndex,setLastSelectedIndex]=React.useState(-1),[lastSelectedAction,setLastSelectedAction]=React.useState<boolean|null>(null),[oldHours,setOldHours]=React.useState<number|null>(null),[newAgents,setNewAgents]=React.useState<{id:string;name:string}[]>([]),[floatHidden,setFloatHidden]=React.useState(false),[stoppingIds,setStoppingIds]=React.useState<Set<string>>(new Set),[continuingIds,setContinuingIds]=React.useState<Set<string>>(new Set),[manualLoadedIds,setManualLoadedIds]=React.useState<Set<string>>(new Set),[extStopError,setExtStopError]=React.useState(''),[entityPhase,setEntityPhase]=React.useState(0),runningSeen=React.useRef(false),runningIdsSeen=React.useRef<Set<string>>(new Set),noticeTimers=React.useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map)
   const nameOf=tab=>tab.nameKey?tr(tab.nameKey):tab.name,tabs=[...defaultTabs,...(prefs.tabs||[])].filter(t=>t.id!=='filtered').filter((t,i,a)=>a.findIndex(x=>x.id===t.id)===i), archived=new Set(prefs.archived||[]), archivedParents=prefs.archivedParents||{}, currentId=rootSession(state.byId,sessionId||state.current), current=state.byId[currentId], currentCwd=current?.cwd, parentRows=Object.values(state.byId).filter(s=>s.origin!=='subagent'), scopeOptions=[...new Set(parentRows.map(s=>s.cwd).filter(Boolean))],workspaceKey=scope.startsWith('workspace:')?scope.slice(10):scope==='currentWorkspace'?currentCwd:undefined,availableSessions=parentRows.filter(s=>!workspaceKey||s.cwd===workspaceKey),selectedSession=sessionScope||currentId
   const filterCollapsed=prefs.filterCollapsed!==false
   // The external-agent channel. `externalHasRows` is the demand signal: only a
@@ -57,7 +57,13 @@ export function Manager({t:tr,useSessions,openChild,openSession,refresh,setCatal
   // `unavailable` arm, which folds to the empty set — i.e. every row is shown.
   // The id list is memoized so the effect only re-runs when the candidate SET
   // changes, never once per poll or per row; the host answers a batch per call.
-  const absentExternal=useSessionEntities(externalCandidates),subagentRows=React.useMemo<SubagentRow[]>(()=>{const byId=state.byId,absentChild=absentRowOf(absentExternal,externalStates),rows:SubagentRow[]=Object.values(byId).filter(s=>s.origin==='subagent').filter(s=>!absentChild(s.id)||s.running===true).map(s=>{const catalog=modes[s.id],mode=childModeOf(s,catalog),external=mode==='external'?externalStates[s.id]:undefined;
+  // `entityPhase` is the second, deliberate trigger: a successful delete bumps it
+  // (see deleteSubagent / batchDeleteSubagents), which replays ONE batched probe
+  // over the SAME candidates. It is required because deleting a child changes
+  // nothing in the candidate key — the host rebuilds `byId` and the append-only
+  // catalog from the parent's log — so without it the panel kept the pre-delete
+  // answer and the row only vanished after the panel was reopened (a remount).
+  const absentExternal=useSessionEntities(externalCandidates,entityPhase),subagentRows=React.useMemo<SubagentRow[]>(()=>{const byId=state.byId,absentChild=absentRowOf(absentExternal,externalStates),rows:SubagentRow[]=Object.values(byId).filter(s=>s.origin==='subagent').filter(s=>!absentChild(s.id)||s.running===true).map(s=>{const catalog=modes[s.id],mode=childModeOf(s,catalog),external=mode==='external'?externalStates[s.id]:undefined;
     // For an external child the host's `running` is a constant (there is no
     // Session to look up), so the measured lifecycle edge is the only thing that
     // may set it; an unknown edge leaves the row not running rather than
@@ -125,6 +131,12 @@ export function Manager({t:tr,useSessions,openChild,openSession,refresh,setCatal
       if(data.ok){
         if(row.parentId){refresh(row.parentId)}
         sessionsRt?.refresh?.()
+        // The host confirmed the deletion, so the existence answer this panel
+        // holds is now stale for this id: replay the probe over the current
+        // candidates. Nothing is hidden optimistically — the row keeps its
+        // current state until the host answers, and if the probe fails the row
+        // simply stays (see useSessionEntities).
+        setEntityPhase(phase=>phase+1)
         setPrefs(p=>({
           ...p,
           archived:(p.archived||[]).filter(x=>x!==row.id),
@@ -155,6 +167,9 @@ export function Manager({t:tr,useSessions,openChild,openSession,refresh,setCatal
         const parents=new Set<string>(items.map(x=>x.parentSessionId).filter(Boolean))
         parents.forEach(pid=>refresh(pid))
         sessionsRt?.refresh?.()
+        // Same replay as the single delete: ONE probe for the whole candidate
+        // set, not one per deleted row.
+        setEntityPhase(phase=>phase+1)
         setPrefs(p=>({
           ...p,
           archived:(p.archived||[]).filter(x=>!idsToDelete.includes(x)),

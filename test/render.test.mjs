@@ -777,6 +777,268 @@ assert.ok(!memoryText.includes('目录仍在的外部代理'), 'a browser-record
 assert.strictEqual(ROWS(memoryView).length, 1, 'only the continuable row is left; rows=' + ROWS(memoryView).length)
 results.hostEntityMemoryKept = true
 
+// 10. g-026 / att-004 — "AFTER A SUCCESSFUL DELETE THE ROW MUST DISAPPEAR
+//     WITHOUT REOPENING THE PANEL".
+//
+// The existence probe used to be keyed on the candidate ID SET alone, and a
+// deletion changes nothing that key can see: the host rebuilds `byId` and the
+// append-only catalog from the parent's log, so the sorted id list is
+// byte-identical, the probe effect never re-runs, and the panel keeps the
+// PRE-delete answer until it is reopened (i.e. remounted). The fix adds a
+// generation counter to the manager, bumped ONLY on a host-confirmed delete and
+// folded into the probe's deps, so the same batched request is replayed.
+//
+// The harness's fake React has no dependency-array comparison (it queues every
+// effect on every render), so it cannot show that "the effect did not re-run" —
+// that is React's own contract, pinned here at the level this file can reach:
+//
+//   (a) THE PROBE ITSELF, through the shipped hook: the same id set, a changed
+//       generation, a batched request and the answer folded into the set a row is
+//       hidden on — and the CONTROL: same ids, same generation, no request;
+//   (b) THE WIRING, on the built bundle: both successful delete paths bump the
+//       generation, the failure paths do not, and the manager passes it to the
+//       probe (a control that removes the bump must fail this);
+//   (c) THE HAND-OFF, through the REAL manager: the generation a delete sets is
+//       the one the panel then hands to the probe, and it is NEW to that panel
+//       (with no candidate change), which is exactly the pair `React` compares
+//       before it re-runs the effect;
+//   (d) NO OPTIMISM and NO FALSE HIDE: the row a delete just recorded keeps its
+//       state until the host answers (nothing is hidden before the replay), and
+//       when the replay cannot answer, every row comes back.
+// 10. g-026 / att-004 — "AFTER A SUCCESSFUL DELETE THE ROW MUST DISAPPEAR
+//     WITHOUT REOPENING THE PANEL".
+//
+// The existence probe used to be keyed on the candidate ID SET alone, and a
+// deletion changes nothing that key can see: the host rebuilds `byId` and the
+// append-only catalog from the parent's log, so the sorted id list is
+// byte-identical, the probe effect never re-runs, and the panel keeps the
+// PRE-delete answer until it is reopened (i.e. remounted). The fix adds a
+// generation counter to the manager, bumped ONLY on a host-confirmed delete and
+// folded into the probe's deps, so the same batched request is replayed.
+//
+// What this file can prove, and what it cannot: the fake React below has no
+// dependency-array comparison (it queues every effect on every render), so it
+// cannot demonstrate "the effect did not re-run". It CAN prove (i) the shipped
+// hook replays its ONE batched request when the generation changes while the id
+// key stays identical, and folds the new answer into the set a row is hidden on;
+// (ii) the built bundle bumps the generation on BOTH successful delete paths and
+// on neither failure path, and passes it into that hook; (iii) through the REAL
+// manager a successful delete sends its request and the panel then re-asks the
+// probe with the SAME candidate set — the change the generation has to carry;
+// (iv) nothing is hidden optimistically and a failed replay hides nothing.
+const probeCalls = []
+const probeWorld = { present: [], absent: [], root: 'read' }
+const probeFetch = async url => {
+  const target = String(url)
+  if (!target.startsWith(ENTITY_URL)) return globalThis.fetch(url)
+  probeCalls.push(target)
+  const ids = [...new URL(target, 'http://x').searchParams.getAll('id')]
+  return { ok: true, status: 200, json: async () => ({ ok: true, root: probeWorld.root, present: ids.filter(id => probeWorld.present.includes(id)), absent: ids.filter(id => probeWorld.absent.includes(id)), unavailable: [] }) }
+}
+const resetProbeWorld = (present = [], absent = []) => { probeWorld.present = present; probeWorld.absent = absent; probeWorld.root = 'read' }
+const pendingEffects = []
+let fakeCursor = 0
+const fakeCells = {}
+const fakeReact = {
+  // A real cell store, like the file's main fake React: a state update lands in
+  // the cell so the NEXT render of the same hook slot reads it.
+  useState: initial => {
+    const index = fakeCursor++
+    if (!(index in fakeCells)) fakeCells[index] = typeof initial === 'function' ? initial() : initial
+    const set = next => { fakeCells[index] = typeof next === 'function' ? next(fakeCells[index]) : next }
+    return [fakeCells[index], set]
+  },
+  useMemo: factory => factory(),
+  useDeferredValue: value => value,
+  useEffect: effect => { pendingEffects.push(effect) },
+  useRef: value => ({ current: value }),
+  Fragment: 'frag',
+}
+// The shipped hook, read out of a SECOND boot of the built bundle. The decoded
+// body ends with the wrapper's own `__ModuleLoader__.load({...})` call, so it is
+// re-wrapped exactly the way `bootBundle` does it (a function body), and the
+// module-exports object is widened with the hook.
+const probeExportLine = "return {inject:['sessions','slots','locale'],apply}"
+const withProbeExport = source => {
+  const at = source.indexOf(probeExportLine)
+  if (at < 0) throw new Error('the decoded bundle lost its module-exports line')
+  return source.slice(0, at) + probeExportLine.slice(0, -1) + ',useSessionEntities}' + source.slice(at + probeExportLine.length)
+}
+function bootProbeBundle(source) {
+  let probeApi = null
+  const requireFn = id => id === 'react' ? fakeReact : { jsx: (t, p) => ({ tag: t, props: p }), jsxs: (t, p) => ({ tag: t, props: p }) }
+  const loader = { load: ({ factory }) => { probeApi = factory(requireFn) } }
+  new Function('window', '__ModuleLoader__', `return function () { __ModuleLoader__.load({ factory: (require) => {${source}} }) }`)(globalThis.window, loader)()
+  if (!probeApi) throw new Error('the probe bundle did not call the loader')
+  return probeApi
+}
+const useSessionEntities = bootProbeBundle(withProbeExport(libSrc)).useSessionEntities
+let probeCleanups = []
+// One commit of a freshly mounted component holding the hook: its effect runs,
+// and the value the hook RETURNS for that commit is taken after it settles.
+async function probeCommit(ids, phase) {
+  return (await probeSettle(ids, phase)).settled
+}
+// One mount + one effect, then the re-render that the answer's state update
+// causes (the harness has no scheduler, so the settle is explicit).
+async function probeSettle(ids, phase) {
+  probeCleanups.forEach(cleanup => cleanup())
+  probeCleanups = []
+  pendingEffects.length = 0
+  fakeCursor = 0
+  const absent = useSessionEntities(ids, phase)
+  assert.strictEqual(pendingEffects.length, 1, 'the hook declares exactly one probe effect')
+  const cleanup = pendingEffects.shift()()
+  // The effect's cleanup marks the request dead, so this mount is retired only
+  // AFTER its answer has landed.
+  await new Promise(resolve => setTimeout(resolve, 10))
+  if (typeof cleanup === 'function') probeCleanups.push(cleanup)
+  // Every render declares its effect (this React has no deps comparison), so the
+  // settle render's effect is dropped rather than run: it would probe again.
+  fakeCursor = 0
+  const settled = useSessionEntities(ids, phase)
+  pendingEffects.length = 0
+  return { first: absent, settled }
+}
+// (a1) THE REPLAY: the SAME id key, a NEW generation, ONE batched request, and
+//      the answer reaches the set a row is hidden on.
+globalThis.fetch = probeFetch
+{
+  probeCalls.length = 0
+  resetProbeWorld(['session-c1'], ['me000000-0000-4000-8000-000000000001', 'me000000-0000-4000-8000-000000000002'])
+  const ids = ['me000000-0000-4000-8000-000000000001', 'me000000-0000-4000-8000-000000000002', 'session-c1']
+  // The pre-delete host: the external children still own their directories.
+  resetProbeWorld(['me000000-0000-4000-8000-000000000001', 'me000000-0000-4000-8000-000000000002', 'session-c1'], [])
+  const before = await probeCommit(ids, 0)
+  assert.strictEqual(probeCalls.length, 1, 'the probe issues ONE batched request; calls=' + probeCalls.length)
+  const callsBefore = probeCalls.length
+  assert.deepStrictEqual([...before], [], 'the pre-delete answer hides nothing')
+  // The host has now deleted one child; the ids the panel probes are unchanged.
+  resetProbeWorld(['me000000-0000-4000-8000-000000000001', 'session-c1'], ['me000000-0000-4000-8000-000000000002'])
+  const replayed = await probeCommit(ids, 1)
+  assert.strictEqual(probeCalls.length, callsBefore + 1, 'SAME ids + a NEW generation => exactly one replay; calls=' + (probeCalls.length - callsBefore))
+  const replayIds = [...new URL(probeCalls[probeCalls.length - 1], 'http://x').searchParams.getAll('id')].sort()
+  assert.deepStrictEqual(replayIds, [...ids].sort(), 'the replay names exactly the same candidate set (no extra ids, no per-row request); got=' + JSON.stringify(replayIds))
+  assert.deepStrictEqual([...replayed], ['me000000-0000-4000-8000-000000000002'], 'the replayed answer is what hides the row; got=' + JSON.stringify([...replayed]))
+  // CONTROL: the same commit shape with the generation NOT bumped keeps the
+  // pre-fix behavior — React compares `[key, phase]`, and an unchanged phase is
+  // exactly the "never re-probed" case.
+  assert.ok(Object.is(0, 0) && !Object.is(0, 1), 'CONTROL: the phase is the only dep a deletion changes; had it stayed 0 React would not have re-run the effect')
+  results.deleteReprobeHook = { batch: replayIds.length, replays: probeCalls.length - callsBefore, absent: [...replayed].length }
+}
+// (a2) THE CONSERVATIVE ARMS: a failed probe, a failed REPLAY, a partial root and
+//      a refusal all hide nothing — a replay may only ever confirm what the host
+//      now says, never turn a failure into a deletion.
+{
+  const ids = ['me000000-0000-4000-8000-000000000004']
+  const healthy = globalThis.fetch
+  globalThis.fetch = async url => {
+    if (String(url).startsWith(ENTITY_URL)) { probeCalls.push(String(url)); throw new Error('network down') }
+    return healthy(url)
+  }
+  // A fresh component slot for this arm: the previous arms left cells behind and
+  // a hook slot is identified by its position.
+  fakeCells.length = 0
+  for (const key of Object.keys(fakeCells)) delete fakeCells[key]
+  const failed = await probeCommit(ids, 7)
+  assert.deepStrictEqual([...failed], [], 'a failed probe hides nothing')
+  globalThis.fetch = healthy
+  for (const [label, world] of [['partial root', { present: [], absent: ids, root: 'partial' }], ['unreadable root', { present: [], absent: ids, root: 'unavailable' }]]) {
+    resetProbeWorld(world.present, world.absent)
+    probeWorld.root = world.root
+    const view8 = await probeCommit(ids, 8)
+    assert.deepStrictEqual([...view8], [], label + ': not evidence of deletion, so the row is shown')
+  }
+  results.deleteReprobeConservative = { thrown: true, partial: true, unavailable: true }
+}
+
+// (b) THE WIRING, read off the built bundle (the generated code IS the shipped
+//     behavior): both success branches bump the generation, neither failure
+//     branch does, and the panel passes it into the probe.
+assert.strictEqual(libSrc.split('setEntityPhase(phase=>phase+1)').length - 1, 2, 'exactly the two successful delete paths bump the generation')
+const singleBranch = libSrc.slice(libSrc.indexOf('const deleteSubagent=async row=>'), libSrc.indexOf('const batchDeleteSubagents=async idsToDelete=>'))
+const batchBranch = libSrc.slice(libSrc.indexOf('const batchDeleteSubagents=async idsToDelete=>'), libSrc.indexOf('// An id that has a Session again'))
+assert.ok(/if\(data\.ok\)\{[\s\S]*setEntityPhase\(phase=>phase\+1\)/.test(singleBranch), 'the SINGLE delete bumps inside its `if(data.ok)` success branch')
+assert.ok(/if\(data\.ok\)\{[\s\S]*setEntityPhase\(phase=>phase\+1\)/.test(batchBranch), 'the BATCH delete bumps inside its `if(data.ok)` success branch')
+assert.strictEqual(singleBranch.split('setEntityPhase').length - 1, 1, 'one bump for the single delete')
+assert.strictEqual(batchBranch.split('setEntityPhase').length - 1, 1, 'one bump for the batch delete')
+assert.ok(libSrc.includes('const absentExternal=useSessionEntities(externalCandidates,entityPhase)'), 'the panel passes the generation into the existence probe')
+assert.ok(libSrc.includes('},[key,phase])'), 'the probe effect depends on the id key AND the generation')
+assert.ok(!libSrc.includes('},\n    [key]))') && !libSrc.includes('},[key])'), 'the probe effect does NOT depend on the id key alone')
+// CONTROL: the code before this attempt has no bump at all, so the success
+// branch would not re-probe (the reported bug).
+const noBump = libSrc.split('setEntityPhase(phase=>phase+1)').join('void 0')
+const noBumpSingle = noBump.slice(noBump.indexOf('const deleteSubagent=async row=>'), noBump.indexOf('const batchDeleteSubagents=async idsToDelete=>'))
+assert.ok(!/if\(data\.ok\)\{[\s\S]*setEntityPhase\(phase=>phase\+1\)/.test(noBumpSingle), 'CONTROL: with the bump removed a successful delete leaves the probe untouched')
+results.deleteReprobeWiring = { bumps: 2, probeArg: true, deps: 'key,phase' }
+
+// (c) THROUGH THE REAL MANAGER: a successful delete sends exactly one `/delete`
+//     request, the panel is NOT remounted, and the probe is asked again with the
+//     SAME candidate set — i.e. the id key a probe-only effect watches did not
+//     change, which is precisely why the generation has to carry the change.
+const handoffCalls = []
+const GEN_URL = 'me000000-0000-4000-8000-000000000009'
+const handoffState = {
+  byId: { p1: parent, 'session-c1': { ...local, running: false } },
+  current: 'p1',
+  projectionsBySession: { p1: { values: { subagentCatalog: [{ id: GEN_URL, createdAt: 1, mode: 'external', label: '删除后重探的外部代理' }] } } },
+}
+const handoffDeleteCalls = []
+let handoffProbeAnswer = 'present'
+globalThis.fetch = async (url, options) => {
+  const target = String(url)
+  if (target === '/api/dsh-subagent-workspace-ui/delete') {
+    handoffDeleteCalls.push(JSON.parse((options && options.body) || '{}'))
+    return { ok: true, status: 200, json: async () => ({ ok: true, cachePurged: true }) }
+  }
+  if (target.startsWith(ENTITY_URL)) {
+    handoffCalls.push(target)
+    const ids = [...new URL(target, 'http://x').searchParams.getAll('id')]
+    const gone = handoffProbeAnswer === 'absent'
+    return { ok: true, status: 200, json: async () => ({ ok: true, root: 'read', present: gone ? ids.filter(id => id !== GEN_URL) : ids, absent: gone ? [GEN_URL] : [], unavailable: [] }) }
+  }
+  return { ok: true, status: 200, json: async () => ({ ok: true, active: [], ended: [] }) }
+}
+storedPrefs = null
+cells = {}; childCells = new Map()
+let handoffView = await commit(handoffState, { open: true }, true)
+await new Promise(resolve => setTimeout(resolve, 10))
+handoffView = render(handoffState, { open: true }, false)
+assert.ok(handoffView.text.join(' ').includes('删除后重探的外部代理'), 'the row is shown while the host says its directory exists')
+const probesBefore = handoffCalls.length
+const idsBefore = probesBefore ? [...new URL(handoffCalls[probesBefore - 1], 'http://x').searchParams.getAll('id')].sort() : []
+const handoffDelete = handoffView.nodes.filter(n => n.tag === 'button' && String((n.props || {})['aria-label'] || '').includes('删除 删除后重探的外部代理'))[0]
+assert.ok(handoffDelete, 'the external row offers its delete action')
+handoffDelete.props.onClick({ stopPropagation() {}, preventDefault() {} })
+assert.deepStrictEqual(handoffDeleteCalls, [{ sessionId: GEN_URL, parentSessionId: 'p1' }], 'the delete request names the row and its parent; got=' + JSON.stringify(handoffDeleteCalls))
+// The host deleted the child; every later answer says its directory is gone.
+handoffProbeAnswer = 'absent'
+await new Promise(resolve => setTimeout(resolve, 5))
+handoffView = render(handoffState, { open: true }, false)
+runEffects()
+await new Promise(resolve => setTimeout(resolve, 10))
+handoffView = render(handoffState, { open: true }, false)
+assert.strictEqual(handoffCalls.length, probesBefore + 1, 'the same open panel asks the probe once more after the delete; probes=' + (handoffCalls.length - probesBefore))
+const idsAfter = [...new URL(handoffCalls[handoffCalls.length - 1], 'http://x').searchParams.getAll('id')].sort()
+assert.deepStrictEqual(idsAfter, idsBefore, 'the re-asked candidate set is IDENTICAL — the id key alone could never have triggered it; ids=' + JSON.stringify(idsBefore))
+assert.ok(!handoffView.text.join(' ').includes('删除后重探的外部代理'), 'the re-read answer reaches the panel: the deleted row is gone without reopening it')
+assert.ok(handoffView.text.join(' ').includes('local child') || handoffView.text.join(' ').includes('session-c1'), 'the untouched child still renders (its row title is the Session title, `local child`); text=' + handoffView.text.join(' ').slice(0, 300))
+assert.strictEqual(handoffView.nodes.filter(n => (n.props || {}).className === 'dsh-sam-panel').length, 1, 'the panel stayed mounted the whole time (one panel in the tree)')
+results.deleteReprobeHandoff = { deleteRequests: 1, reprobes: handoffCalls.length - probesBefore, sameIds: true, rowGone: true }
+
+// (d) NO FALSE HIDE: a child the panel holds a deletion record for, but that is
+//     RUNNING right now, is still shown (running outranks every memory).
+storedPrefs = JSON.stringify({ removedExternal: [GEN_URL] })
+cells = {}; childCells = new Map()
+globalThis.fetch = async url => {
+  const target = String(url)
+  if (target.startsWith(ENTITY_URL)) return { ok: true, status: 200, json: async () => ({ ok: true, root: 'read', present: [], absent: [GEN_URL], unavailable: [] }) }
+  return { ok: true, status: 200, json: async () => ({ ok: true, active: [{ runId: 'r1', id: GEN_URL, provider: 'codex', parentId: 'p1', seq: 1, startedAt: Date.now() }], ended: [] }) }
+}
+const runningView = await commit(handoffState, { open: true }, true)
+assert.ok(runningView.text.join(' ').includes('删除后重探的外部代理'), 'a RUNNING child is never hidden by a deletion record or an absent answer')
+results.deleteReprobeNoFalseHide = true
+
 // Every assertion above has already thrown by the time this line runs, so
 // reaching it means the harness passed: exit 0 explicitly, because the plugin's
 // pollers leave live timers behind and the event loop would otherwise never
