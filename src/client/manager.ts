@@ -78,6 +78,18 @@ export function Manager({t:tr,useSessions,openChild,openSession,refresh,setCatal
     if(data&&typeof data==='object')return data
     return {ok:false,error:resp.status===401?tr('unauthorized'):resp.status===403?tr('forbidden'):`HTTP ${resp.status}`}
   }
+  // A deletion can succeed while the host's session-indexed cache could not be
+  // purged (the answer carries `cachePurged:false`): the session IS gone, so the
+  // row must still disappear, but the user has to know the cached row may come
+  // back after a reload. Silent success is what made the old failure look like
+  // "deleting does nothing". The detail names the domain tables that failed (or
+  // that the service is missing) so the message is actionable.
+  const wanUnpurgedCache=payload=>{
+    const purge=payload&&payload.cachePurge?payload.cachePurge:undefined
+    const failed=Array.isArray(purge?.failed)?purge.failed.map(f=>f&&f.domain?`${f.domain}.${f.table}`:String(f)):undefined
+    const detail=failed&&failed.length?failed.join(', '):purge&&purge.status?purge.status:tr('unknown')
+    window.alert(tr('cachePurgeFailed',{detail}))
+  }
   const deleteSubagent=async row=>{
     if(row.running){
       if(!window.confirm(tr('confirm.deleteRunning',{name:row.name})))return
@@ -100,6 +112,7 @@ export function Manager({t:tr,useSessions,openChild,openSession,refresh,setCatal
           archivedParents:(()=>{const np={...(p.archivedParents||{})};delete np[row.id];return np})(),
           removedExternal:externalRemovedAdd(p.removedExternal,row.id)
         }))
+        if(data.cachePurged===false)wanUnpurgedCache(data)
       }else{
         window.alert(tr('deleteFailed')+(data.error||tr('unknownError')))
       }
@@ -130,6 +143,7 @@ export function Manager({t:tr,useSessions,openChild,openSession,refresh,setCatal
           removedExternal:idsToDelete.reduce((list,id)=>externalRemovedAdd(list,id),p.removedExternal)
         }))
         setSelectedIds(new Set)
+        if(data.cachePurged===false)wanUnpurgedCache(data)
       }else{
         window.alert(tr('batchDeleteFailed')+(data.error||tr('unknownError')))
       }
