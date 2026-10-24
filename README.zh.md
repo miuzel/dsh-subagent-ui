@@ -192,6 +192,13 @@ http://127.0.0.1:3080
 
 已结束的行还会用状态点区分结束方式：**正常结束为空心绿环，异常结束（⏸ 停止/aborted、error、blocked、max-tokens 等）为实心红点**，hover 显示「正常结束 / 异常结束」文字（zh+en）。判定只读子代理自身的公共只读投影 `subagentTiming.lastTurnCompleted`（宿主仅在 `turn/end` 写入、`turn/start` 删除）；宿主不提供该投影时**保持原样**，绝不把“未知”显示成“正常”，运行中的行保持原绿点。
 
+### 外部代理（Claude Code / Codex）
+
+- **可见**：`@deepseek-ai/dsh-subagent-claude-code` / `@deepseek-ai/dsh-subagent-codex` 添加的子代理会出现在面板里，标注「外部代理」并跟上宿主如实上报的引擎名（`Claude Code`、`Codex`；插件不认识的 provider 原样显示其 id）。头部计数一并算入。
+- **为什么需要专门处理**：这类子代理以 `mode: 'external'` 记入 catalog，**根本没有本地会话**，所以面板原本那套「从会话摘要取行」的路径永远造不出它们；它们的行由父会话 catalog 合成。
+- **状态是测出来的，不是猜的**：宿主对它们的 `activity` 是写死的 `'inactive'`（去找一个不存在的会话），唯一诚实的信号是 `subagent/start` / `subagent/end` 这对事件。因此测不到边沿时不显示「已结束」，而是显示「状态不可得」——**宁可说不知道，也不假报结束**。
+- **可停止**：运行中提供「⏹ 停止」，走宿主路由自行解析该次运行（浏览器不指定父会话）；被中止的委派会如实告知模型。
+
 ### 打开与查看子代理
 
 - **精确地址打开**：点击卡片把子代理打开到主对话区，地址为 `{ parentSessionId, childSessionId, mode }`；批量模式下卡片整体变为选择区域，归档控件不会触发跳转。降级顺序见「打开子代理会话的三级能力探测」。

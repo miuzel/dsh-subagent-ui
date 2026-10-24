@@ -80,6 +80,13 @@ Working on a checkout instead of the npm release? See [Local checkout (contribut
 - Active children are grouped at the top in a collapsible section. The panel shows the latest two lines of live output, recent tool calls, context injection, command status, and a gray final snapshot after completion — for **every** running row, not only the selected child, because the plugin retains its own session binding instead of borrowing whatever the main view happens to hold.
 - Ended rows mark how the last turn finished, from the child's own public read-only `subagentTiming.lastTurnCompleted` projection: a normal end is a **hollow green ring**, an abnormal one (stopped/aborted, error, blocked, a token ceiling …) a **solid red dot**, each with a zh/en hover label. A host that does not publish the projection keeps exactly the previous dot — an unknown end is never shown as a normal one — and a running row keeps its original green dot.
 
+### External agents (Claude Code / Codex)
+
+- The children added by `@deepseek-ai/dsh-subagent-claude-code` and `@deepseek-ai/dsh-subagent-codex` **appear in the manager**, labelled `外部代理` / *external agent* and followed by the engine the host actually reports (`Claude Code`, `Codex`, or the provider id verbatim when this plugin does not know it). They count toward the header total.
+- Why they needed their own path: such a child is catalogued with `mode: 'external'` and has **no local session at all**, so the ordinary "row comes from a session summary" pass can never produce it. Its row is synthesized from the parent's catalog instead.
+- Status is **measured, not guessed**. The host's `activity` is a hard-coded `'inactive'` for these children (it resolves a session that never exists), so the only honest signal is the `subagent/start` / `subagent/end` pair. With no measured edge the row reads `状态不可得` (*status unavailable*) and never `已结束` — better to say "unknown" than to invent an ending.
+- A running external agent offers `⏹ 停止`. Stop goes through a host route that resolves the run itself (the browser never names a parent), and a delegation aborted before it finishes is reported to the model as such.
+
 ### Opening and inspecting a child
 
 - Open a loaded child at its exact `{ parentSessionId, childSessionId, mode }` address. In normal mode the whole card opens the child; archive controls do not. The navigation tiers are documented under [Compatibility](#compatibility).
