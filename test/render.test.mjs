@@ -1039,6 +1039,23 @@ const runningView = await commit(handoffState, { open: true }, true)
 assert.ok(runningView.text.join(' ').includes('删除后重探的外部代理'), 'a RUNNING child is never hidden by a deletion record or an absent answer')
 results.deleteReprobeNoFalseHide = true
 
+// The panel's close button must sit BEFORE the title (issue #2: on the Windows
+// desktop host the right-aligned one overlapped DSH's own close control and was
+// mostly covered). Assert the DOM order the user actually gets, not the source.
+{
+  const orderView = await commit(stateFor(), { open: true }, true)
+  const firstClass = node => String((node.props || {}).className || '')
+  const closeAt = orderView.nodes.findIndex(n => firstClass(n) === 'dsh-sam-close')
+  const titleAt = orderView.nodes.findIndex(n => n.tag === 'h2')
+  assert.ok(closeAt >= 0, 'the panel close button renders')
+  assert.ok(titleAt >= 0, 'the panel title renders')
+  assert.ok(closeAt < titleAt, 'the close button comes BEFORE the title; close=' + closeAt + ' title=' + titleAt)
+  // Exactly one close control: a leftover second one would put the overlap back.
+  const closeCount = orderView.nodes.filter(n => firstClass(n) === 'dsh-sam-close').length
+  assert.strictEqual(closeCount, 1, 'exactly one close button; got ' + closeCount)
+  results.closeButtonBeforeTitle = { closeAt, titleAt, count: closeCount }
+}
+
 // Every assertion above has already thrown by the time this line runs, so
 // reaching it means the harness passed: exit 0 explicitly, because the plugin's
 // pollers leave live timers behind and the event loop would otherwise never
