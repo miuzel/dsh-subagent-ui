@@ -4,7 +4,7 @@ All notable changes to `dsh-subagent-workspace-ui`, newest first.
 
 The English notes below go back to **v1.3.2**. Release notes for **v1.3.1 … v1.0.1** were written in Chinese only; [`CHANGELOG.zh.md`](https://github.com/miuzel/dsh-subagent-ui/blob/HEAD/CHANGELOG.zh.md) carries the complete history back to v1.0.1.
 
-## Unreleased
+## v1.11.1
 
 - **Fix**: the panel's close button (`×`) sat at the header's right end, exactly where the DSH desktop host puts its own close control, so on the Windows desktop build ours was mostly covered (issue #2). It now sits **before the title**, the header no longer uses `space-between` (which would have pushed the title right once the button moved left), and the button carries `flex: 0 0 auto` so a long title cannot squeeze it.
 - **Tests**: `test/render.test.mjs` asserts the DOM order the user actually gets — the close button precedes the `<h2>` title, and the panel contains exactly one close control. Reverting the order turns it red.

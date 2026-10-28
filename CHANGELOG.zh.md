@@ -2,7 +2,7 @@
 
 `dsh-subagent-workspace-ui` 的全部版本变更记录，最新在前。本文件承接 README 迁出的完整历史（回溯至 v1.0.1）；英文版见 [`CHANGELOG.md`](https://github.com/miuzel/dsh-subagent-ui/blob/HEAD/CHANGELOG.md)（英文条目自 v1.3.2 起）。
 
-## 未发布
+## v1.11.1
 
 - **修复：面板关闭键（`×`）位于头部右端，与 DSH 桌面宿主自己的关闭键同位重叠，在 Windows 桌面端被遮挡大半（issue #2）**。现在移到**标题左侧**；头部不再用 `space-between`（否则按钮移左后标题会被推到右边），按钮加 `flex: 0 0 auto`，标题过长也不会把它压扁。
 - **测试**：`test/render.test.mjs` 断言的是用户实际拿到的 DOM 顺序——关闭按钮排在 `<h2>` 标题之前，且整个面板只有一个关闭控件；把顺序换回去即变红。
