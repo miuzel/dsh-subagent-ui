@@ -2,7 +2,7 @@
 
 `dsh-subagent-workspace-ui` 的全部版本变更记录，最新在前。本文件承接 README 迁出的完整历史（回溯至 v1.0.1）；英文版见 [`CHANGELOG.md`](https://github.com/miuzel/dsh-subagent-ui/blob/HEAD/CHANGELOG.md)（英文条目自 v1.3.2 起）。
 
-## 未发布
+## v1.12.0
 
 - **修复：dsh 0.2.2-rc.1 下面板被压进标题栏**。该版本给会话区域外层加了静态 `transform`（`matrix(1,0,0,1,0,0)`，视觉上毫无变化，但足以成为 `position:fixed` 后代的包含块），于是遮罩按那一列而非视口解析，面板被裁成标题栏高度。遮罩现在以 manual popover 进入 **top layer** —— 包含块唯一够不到的地方 —— 并带能力探测与 `:popover-open` 规则，抵消 UA 给 popover 的默认 margin 与 border。没有改用 `createPortal`：模块加载器对 `react-dom` 返回 `null`。
 - **测试**：`test/render.test.mjs` 对构建产物断言 popover 接线（属性、ref、能力探测的 show/hide、几何规则）；去掉该属性即变红。
@@ -11,7 +11,6 @@
 - **dsh 0.2.2-rc.1+ 上的行为**：`sessionStats` 改为以 `summary: false` 注册，因此用户从未打开过的子代理，摘要里没有 tps / 轮次 / 步数。这些片段会被省略（绝不显示 0 或 `NaN`），子代理一旦被打开或 retain 即恢复；轮次/步数会回落到各自的投影键。这是宿主刻意做的摘要瘦身，插件无法临时改回：该标记写死在 `dsh-session-stats` 的定义里，而注册表会拒绝同一 key 以不同 `summary` 值二次注册。
 
 ## v1.11.1
-
 
 - **修复：面板关闭键（`×`）位于头部右端，与 DSH 桌面宿主自己的关闭键同位重叠，在 Windows 桌面端被遮挡大半（issue #2）**。现在移到**标题左侧**；头部不再用 `space-between`（否则按钮移左后标题会被推到右边），按钮加 `flex: 0 0 auto`，标题过长也不会把它压扁。
 - **测试**：`test/render.test.mjs` 断言的是用户实际拿到的 DOM 顺序——关闭按钮排在 `<h2>` 标题之前，且整个面板只有一个关闭控件；把顺序换回去即变红。

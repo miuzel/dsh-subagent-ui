@@ -4,7 +4,7 @@ All notable changes to `dsh-subagent-workspace-ui`, newest first.
 
 The English notes below go back to **v1.3.2**. Release notes for **v1.3.1 … v1.0.1** were written in Chinese only; [`CHANGELOG.zh.md`](https://github.com/miuzel/dsh-subagent-ui/blob/HEAD/CHANGELOG.zh.md) carries the complete history back to v1.0.1.
 
-## Unreleased
+## v1.12.0
 
 - **Fix**: on dsh **0.2.2-rc.1** the manager panel was squeezed into the header strip. That host gives the conversation column a static `transform` (`matrix(1,0,0,1,0,0)` — visually nothing, but enough to become the containing block for `position:fixed` descendants), so the panel's full-viewport backdrop resolved against that column instead of the viewport. The backdrop now enters the **top layer** as a manual popover — the one region an ancestor containing block cannot reach — with a capability probe and a `:popover-open` rule that clears the UA's own popover margin and border. `createPortal` was not an option: the module loader returns `null` for `react-dom`.
 - **Tests**: `test/render.test.mjs` asserts the popover wiring on the built bundle (attribute, ref, capability-probed show/hide, the geometry rule); dropping the attribute turns it red.
@@ -14,7 +14,6 @@ The English notes below go back to **v1.3.2**. Release notes for **v1.3.1 … v1
 - **Behaviour on dsh 0.2.2-rc.1+**: `sessionStats` is now registered with `summary: false`, so a child the operator has never opened has no tps / turns / steps in its summary. Those segments are omitted (never shown as 0 or `NaN`) and come back once the child is opened or retained; `turns`/`steps` fall back to their own projection keys. This is the host's deliberate summary slimming, and it cannot be toggled from a plugin: the flag is baked into `dsh-session-stats`'s definition and the registry refuses a second registration of the same key with a different `summary` value.
 
 ## v1.11.1
-
 
 - **Fix**: the panel's close button (`×`) sat at the header's right end, exactly where the DSH desktop host puts its own close control, so on the Windows desktop build ours was mostly covered (issue #2). It now sits **before the title**, the header no longer uses `space-between` (which would have pushed the title right once the button moved left), and the button carries `flex: 0 0 auto` so a long title cannot squeeze it.
 - **Tests**: `test/render.test.mjs` asserts the DOM order the user actually gets — the close button precedes the `<h2>` title, and the panel contains exactly one close control. Reverting the order turns it red.
