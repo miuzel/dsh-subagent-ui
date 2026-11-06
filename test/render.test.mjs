@@ -1055,6 +1055,27 @@ results.deleteReprobeNoFalseHide = true
   assert.strictEqual(closeCount, 1, 'exactly one close button; got ' + closeCount)
   results.closeButtonBeforeTitle = { closeAt, titleAt, count: closeCount }
 }
+// dsh 0.2.2-rc.1 gives the conversation column a static `transform`, which makes
+// it the containing block for `position:fixed` descendants: the panel backdrop
+// resolved against the header strip and the panel was clipped into it (issue #3).
+// The backdrop therefore enters the top layer as a manual popover, the one place
+// a containing block cannot reach. Asserted on the built bundle, which is what
+// actually ships, plus the CSS that undoes the UA's popover defaults.
+{
+  assert.ok(/className:'dsh-sam-backdrop',ref:backdropRef,popover:'manual'/.test(libSrc), 'the backdrop is a manual popover and carries a ref')
+  assert.ok(libSrc.includes('typeof node.showPopover!==\'function\''), 'the top-layer lift is capability-probed, not assumed')
+  assert.ok(libSrc.includes('node.showPopover()'), 'the backdrop is lifted into the top layer when it opens')
+  assert.ok(libSrc.includes('node.hidePopover()'), 'and lowered again when it closes')
+  // The UA gives a popover a border and a negative margin; without this rule the
+  // panel would be inset by them even in the top layer.
+  assert.ok(libSrc.includes('.dsh-sam-backdrop:popover-open{'), 'the popover-open state restates the full-viewport geometry')
+  assert.ok(/\.dsh-sam-backdrop:popover-open\{[^}]*margin:0/.test(libSrc), 'the UA popover margin is cleared')
+  assert.ok(/\.dsh-sam-backdrop:popover-open\{[^}]*border:0/.test(libSrc), 'the UA popover border is cleared')
+  // CONTROL: the pre-fix backdrop carried no popover at all, which is exactly the
+  // state that got clipped into the header.
+  assert.ok(!/className:'dsh-sam-backdrop',onMouseDown/.test(libSrc), 'CONTROL: a plain fixed backdrop (the clipped state) is what this rejects')
+  results.backdropTopLayer = { popover: true, probed: true, css: true }
+}
 
 // Every assertion above has already thrown by the time this line runs, so
 // reaching it means the harness passed: exit 0 explicitly, because the plugin's
