@@ -94,12 +94,16 @@ const libSrc = (() => {
 const footer = "    return {inject:['sessions','slots','locale'],apply}"
 const scopeSrc = src.replace(footer, `${footer.slice(0, -1)}, ActiveFloat, catalogEntriesOf, modeMap, childModeOf, externalRowsOf, deletedExternalOf, EXTERNAL_REMOVED_LIMIT, externalRemovedCap, externalRemovedAdd, sessionEntitiesOf, absentRowOf}`)
 let api = null
-globalThis.window.__ModuleLoader__ = { load: ({ factory }) => { api = factory(id => id === 'react' ? React : { jsx: (t, p) => renderChild(t, p), jsxs: (t, p) => renderChild(t, p) }) } }
+// The loader the SHIPPED copy was booted through; every control boot replaces
+// `window.__ModuleLoader__`, so each control restores this one afterwards.
+const shippedLoader = { load: ({ factory }) => { api = factory(id => id === 'react' ? React : { jsx: (t, p) => renderChild(t, p), jsxs: (t, p) => renderChild(t, p) }) } }
+globalThis.window.__ModuleLoader__ = shippedLoader
 new Function('window', scopeSrc)(globalThis.window)
 
 const dicts = {}
 const registrations = []
 let state = { byId: {}, current: 'p1' }
+const shippedApi = api
 api.apply({
   sessions: { list: { getSnapshot: () => ({ byId: state.byId, current: state.current }) }, binding: () => null },
   effect: fn => { try { fn() } catch {} },
@@ -1076,31 +1080,59 @@ results.deleteReprobeNoFalseHide = true
   assert.ok(!/className:'dsh-sam-backdrop',onMouseDown/.test(libSrc), 'CONTROL: a plain fixed backdrop (the clipped state) is what this rejects')
   results.backdropTopLayer = { popover: true, probed: true, css: true }
 }
+// ONE hook pool for every mount of the active float, shipped and control alike:
+// `mount()` resets it per render, and each control boot must start from its own
+// EMPTY pool. A control that shared this header would inherit the shipped function's
+// hook cells and silently render the shipped effect instead of its own (measured).
+const FLOAT_CELLS_KEY = '__floatCells'
 // The ACTIVE FLOAT has the same jail: it is `position:fixed` too, and it renders
 // inside the header fragment, so the same transformed column confines it and the
 // float disappears entirely (issue #3, float half). Same remedy, but the float is
 // conditionally PERSISTENT rather than mounted-on-open, so the assertions below
 // walk its real lifecycle: shown -> dragged -> closed -> shown again.
+//
+// THE REPORTED BUG (and the regression guard for it): the first cut of this lift
+// ALSO listened for the UA `toggle` event and lowered the popover from it. But
+// `toggle` fires on BOTH directions — `showPopover()` is itself a `toggle` with
+// `newState: 'open'` — so the float opened and then closed itself in the same
+// tick (`display: none`), measured on the operator's real 3080 page. The stub
+// below therefore EMITS `toggle` on every show/hide, like a browser does, and
+// the assertions require the float to stay open after the lift.
 {
   const floatClass = n => String((n.props || {}).className || '').split(' ').includes('dsh-sam-active-float')
   const floatNodes = v => v.nodes.filter(floatClass)
-  // A node that records the two lifecycle calls and the UA's `toggle` event the
-  // top-layer contract depends on (a light-dismissed popover, or one the UA
-  // closes, must be lowered deliberately rather than left stuck).
+  // A node that behaves like a REAL manual popover: `showPopover`/`hidePopover`
+  // apply visibility AND dispatch a `toggle` event with the direction in
+  // `newState`, exactly as the platform does. Anything that closes the float
+  // from a toggle listener therefore reproduces the bug here instead of passing.
   const stubNode = ({ api = true } = {}) => {
     const listeners = new Map()
     const calls = []
     let open = false
-    return {
+    const emit = (type, detail) => {
+      const handlers = listeners.get(type)
+      if (!handlers) return
+      for (const fn of handlers) fn(detail)
+    }
+    // The platform dispatches `toggle` ASYNCHRONOUSLY (a queued task after the
+    // state change), never synchronously inside showPopover()/hidePopover(). The
+    // stub mirrors that: a synchronous emit would let a listener added right
+    // after `showPopover()` dodge the event, which a real browser does not do.
+    const queue = (type, detail) => queueMicrotask(() => emit(type, detail))
+    const node = {
       calls,
       get open() { return open },
       matches: sel => sel === ':popover-open' && open,
-      ...(api ? { showPopover() { calls.push('show'); open = true }, hidePopover() { calls.push('hide'); open = false } } : {}),
-      addEventListener(type, fn) { listeners.set(type, fn) },
-      removeEventListener(type) { listeners.delete(type) },
-      emit(type) { const fn = listeners.get(type); if (fn) fn() },
+      ...(api ? {
+        showPopover() { calls.push('show'); open = true; queue('toggle', { newState: 'open', oldState: 'closed' }) },
+        hidePopover() { calls.push('hide'); open = false; queue('toggle', { newState: 'closed', oldState: 'open' }) },
+      } : {}),
+      addEventListener(type, fn) { listeners.set(type, [...(listeners.get(type) || []), fn]) },
+      removeEventListener(type, fn) { listeners.set(type, (listeners.get(type) || []).filter(h => h !== fn)) },
+      emit(type, detail) { emit(type, detail) },
       listeners,
     }
+    return node
   }
   // A component slot that feeds `useRef` — the only hook the float's lift uses.
   // `slots` selects the component's own hook pool. The stable `__floatCells`
@@ -1108,17 +1140,21 @@ results.deleteReprobeNoFalseHide = true
   // scope), but the CONTROL is booted separately and its helper pool must not be
   // shared with it — two copies sharing one cell store is how a booted control
   // silently renders the shipped component instead of its own.
+  // `slots` is the CONTROL's own bundle api (the shipped copy passes nothing and
+  // reads the module-level `api`). Each copy owns its cell pool; the shipped
+  // pool is reset per render by `mount()`.
   const renderFloat = (floatApi, props, slots) => {
-    const component = slots ? floatApi.ActiveFloat : api.ActiveFloat
+    const component = slots ? slots.ActiveFloat : api.ActiveFloat
+    const owner = slots || api
     cursor = 0
     const saved = cells
-    cells = slots ? {} : (floatApi.__floatCells || (floatApi.__floatCells = {}))
+    cells = owner[FLOAT_CELLS_KEY] || (owner[FLOAT_CELLS_KEY] = {})
     try { return collect(component({ t: k => zh[k] || k, rows: [], openRow() {}, onHide() {}, stopAgent() {}, stopAllAgents() {}, stoppingIds: new Set(), liveEnabled: false, onLiveChange() {}, liveCap: 0, ...props })) } finally { cells = saved }
   }
   // One float render cycle: the component, then the effects it queued.
-  const mountFloat = (floatApi, node, props) => {
+  const mountFloat = (floatApi, node, owner) => {
     const saved = effects.splice(0)
-    const out = renderFloat(floatApi, props)
+    const out = renderFloat(floatApi, {}, owner)
     const queued = effects.splice(0)
     effects.push(...saved)
     return { out, queued }
@@ -1134,21 +1170,14 @@ results.deleteReprobeNoFalseHide = true
   //     float renders inside a static-transform column, and without the top-layer
   //     lift there is no popover to escape it — the float has no `popover`
   //     attribute at all, so the column stays its containing block.
-  const controlFloat = renderFloat(control.api, {}, 'control')
+  const controlFloat = renderFloat(control.api, {}, control.api)
   assert.ok(floatNodes(controlFloat).length === 1, 'control: the float still renders (the bug is placement, not mounting); nodes=' + controlFloat.nodes.length)
   const controlNode = floatNodes(controlFloat)[0]
   assert.strictEqual(controlNode.props.popover, undefined, 'CONTROL: the pre-fix float carries no popover, so the transformed column is its containing block and it is clipped into the header')
   assert.strictEqual(controlNode.props.ref, undefined, 'CONTROL: and holds no ref, so nothing could lift it')
-  // (1) The shipped float is a manual popover with a ref.
-  const first = mountFloat(api, stubNode(), {})
-  const shipped = floatNodes(first.out)
-  assert.strictEqual(shipped.length, 1, 'the active float renders once')
-  assert.strictEqual(shipped[0].props.popover, 'manual', 'the float is a manual popover')
-  assert.strictEqual(typeof shipped[0].props.ref, 'object', 'and carries a ref so the effect can reach the DOM node')
-  assert.strictEqual(shipped[0].tag, 'aside', 'still the aside the plugin always rendered (role=status surface)')
   // The float's own hooks get their own slot pool (fresh mount).
   const mount = () => {
-    api.__floatCells = {}
+    api[FLOAT_CELLS_KEY] = {}
     const saved = effects.splice(0)
     const out = renderFloat(api, {})
     const mine = effects.splice(0)
@@ -1159,17 +1188,38 @@ results.deleteReprobeNoFalseHide = true
   // React keeps one per element lifetime. So the harness drives the effect with
   // the ref the float rendered for THAT commit, exactly once per mount.
   const refFrom = out => { const withRef = floatNodes(out).find(n => (n.props || {}).ref); assert.ok(withRef, 'the float renders a ref'); return withRef.props.ref }
-  // (a) first appearance: the lift effect is present and lifts the node.
+  const liftOf = mine => mine.find(e => e.toString().includes('showPopover'))
+  // (1) The shipped float is a manual popover with a ref.
+  const first = mountFloat(api, stubNode())
+  const shipped = floatNodes(first.out)
+  assert.strictEqual(shipped.length, 1, 'the active float renders once')
+  assert.strictEqual(shipped[0].props.popover, 'manual', 'the float is a manual popover')
+  assert.strictEqual(typeof shipped[0].props.ref, 'object', 'and carries a ref so the effect can reach the DOM node')
+  assert.strictEqual(shipped[0].tag, 'aside', 'still the aside the plugin always rendered (role=status surface)')
+  // (a) FIRST APPEARANCE — THE REPORTED BUG. The lift runs against a stub that
+  //     dispatches `toggle{newState:'open'}` from `showPopover()`. Before the fix
+  //     the toggle listener answered that event with hidePopover(); the float must
+  //     now stay open, with `hidePopover` never called on the way in.
   const mountNode = stubNode()
   const firstMount = mount()
   const refNow = refFrom(firstMount.out)
   assert.ok(refNow && 'current' in refNow, 'the ref is a React ref object')
   refNow.current = mountNode
-  const lift = firstMount.mine.find(e => e.toString().includes('showPopover'))
+  const lift = liftOf(firstMount.mine)
   assert.ok(lift, 'the float queues a top-layer lift effect: ' + firstMount.mine.map(e => e.toString().slice(0, 40)))
   const unmount = lift()
-  assert.deepStrictEqual(mountNode.calls, ['show'], 'the float enters the top layer when it first appears; calls=' + JSON.stringify(mountNode.calls))
-  assert.ok(mountNode.listeners.has('toggle'), 'and listens for the UA `toggle` so a popover it closes is lowered on purpose')
+  assert.strictEqual(typeof unmount, 'function', 'the lift effect returns a cleanup')
+  assert.deepStrictEqual(mountNode.calls, ['show'], 'THE FLOAT STAYS OPEN: the toggle event the UA fires for showPopover() must not be answered with hidePopover; calls=' + JSON.stringify(mountNode.calls))
+  assert.strictEqual(mountNode.open, true, 'after the lift the node reports :popover-open (the measured `display:none` symptom is not reproducible)')
+  assert.strictEqual(mountNode.matches(':popover-open'), true, 'and matches(:popover-open) is true, so the :popover-open geometry applies instead of display:none')
+  assert.ok(!mountNode.listeners.has('toggle'), 'no toggle listener is installed at all — closing is owned by the lifecycle, not by the UA event (calls=' + JSON.stringify(mountNode.calls) + ')')
+  // (a2) A stray UA `toggle` (light dismiss of ANOTHER popover never reaches this
+  //      node, but a host extension could dispatch one) must not close a float the
+  //      component still renders: nothing is listening, so nothing happens.
+  mountNode.emit('toggle', { newState: 'closed', oldState: 'open' })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepStrictEqual(mountNode.calls, ['show'], 'a bare toggle event does not close the float; calls=' + JSON.stringify(mountNode.calls))
+  assert.strictEqual(mountNode.open, true, 'still open')
   // (b) A RE-RENDER (the 1 s tick, a live-output update, a drag) must not
   //     re-run the lift: it is queued with an empty dep list, i.e. once per
   //     element lifetime, never per paint.
@@ -1181,33 +1231,105 @@ results.deleteReprobeNoFalseHide = true
   // (c) the float is hidden by its own fixed reference: the conditional render
   //     drops the aside, so the cleanup must LOWER it — a stuck `popover-open`
   //     node would be the same jail with extra steps.
-  assert.strictEqual(typeof unmount, 'function', 'the lift effect returns a cleanup')
   unmount()
-  assert.deepStrictEqual(mountNode.calls, ['show', 'hide'], 'hiding the float lowers it again; calls=' + JSON.stringify(mountNode.calls))
+  assert.deepStrictEqual(mountNode.calls, ['show', 'hide'], 'hiding the float lowers it again, exactly once; calls=' + JSON.stringify(mountNode.calls))
   assert.strictEqual(mountNode.open, false, 'and the DOM node really reports closed')
   // (d) it comes back (a child starts running again): a fresh node, a fresh lift.
-  //     A re-mount starts from empty slots, exactly like React.
+  //     A re-mount starts from empty slots, exactly like React. Showing a node
+  //     that is still open must not throw the lift away either.
   const backNode = stubNode()
   const backMount = mount()
   refFrom(backMount.out).current = backNode
-  const backCleanup = backMount.mine.find(e => e.toString().includes('showPopover'))()
+  const backCleanup = liftOf(backMount.mine)()
   assert.deepStrictEqual(backNode.calls, ['show'], 'the float re-enters the top layer when it reappears; calls=' + JSON.stringify(backNode.calls))
   assert.strictEqual(typeof backCleanup, 'function', 'and holds a cleanup of its own')
-  // (e) the UA closes the popover by itself (light dismiss, a re-parent, a
-  //     fullscreen change): the toggle listener lowers it deliberately so the
-  //     state and the DOM agree instead of leaving a stale `popover-open`.
-  backNode.emit('toggle')
-  assert.ok(backNode.calls.includes('hide'), 'a UA-initiated close is mirrored into hidePopover; calls=' + JSON.stringify(backNode.calls))
+  backCleanup()
+  assert.deepStrictEqual(backNode.calls, ['show', 'hide'], 'the second lifecycle lowers it once; calls=' + JSON.stringify(backNode.calls))
+  // (e) an already-open node is lifted again rather than trusted: the effect no
+  //     longer reads :popover-open at all (that read was the bug's trigger), so a
+  //     node left open by a fullscreen/reparent cycle is still shown and closed
+  //     exactly one time per direction.
+  const sticky = stubNode()
+  sticky.showPopover()
+  sticky.calls.length = 0
+  const stickyMount = mount()
+  refFrom(stickyMount.out).current = sticky
+  const stickyCleanup = liftOf(stickyMount.mine)()
+  assert.deepStrictEqual(sticky.calls, ['show'], 'the lift calls showPopover once, whatever the prior :popover-open state was; calls=' + JSON.stringify(sticky.calls))
+  assert.strictEqual(sticky.open, true, 'and ends open')
+  stickyCleanup()
+  assert.deepStrictEqual(sticky.calls, ['show', 'hide'], 'cleanup lowers it once; calls=' + JSON.stringify(sticky.calls))
   // (f) CAPABILITY PROBE: a host without the popover API keeps the plain fixed
   //     float — no crash, no half-lifted state.
   const legacy = stubNode({ api: false })
   assert.ok(legacy.showPopover === undefined && legacy.hidePopover === undefined, 'fixture: this node has no popover API')
   const legacyMount = mount()
   // The probe runs BEFORE any API call, so no ref wiring is needed here.
-  const legacyLift = legacyMount.mine.find(e => e.toString().includes('showPopover'))
+  const legacyLift = liftOf(legacyMount.mine)
   assert.strictEqual(legacyLift(), undefined, 'no popover API => the lift effect is inert (returns nothing)')
   assert.deepStrictEqual(legacy.calls, [], 'and it never calls a missing API; calls=' + JSON.stringify(legacy.calls))
-  // (g) DRAG and SCROLL are carried by the same node, so they survive the lift:
+  // (g) NEGATIVE CONTROL FOR THE BUG ITSELF: take the SHIPPED source and put the
+  //     old toggle self-close back (exactly the shape that shipped in e063e12),
+  //     boot it as its own bundle, and drive it through the same stub. It must
+  //     reproduce the measured symptom — opened, then closed in the same tick —
+  //     which is what makes assertion (a) above meaningful rather than vacuous.
+  const buggyLift = "try{node.showPopover()}catch(error){console.warn('subagent-workspace-ui: active float could not enter the top layer',error)}return()=>{try{node.hidePopover()}catch(error){/* already gone */}}}"
+  assert.ok(libSrc.includes(buggyLift), 'the control is derived from the shipped lift (the anchor it rewrites exists)')
+  const OLD_LISTENER = "const close=()=>{try{if(node.matches(':popover-open'))node.hidePopover()}catch(error){/* already gone */}};node.addEventListener('toggle',close);return()=>{node.removeEventListener('toggle',close);close()}}"
+  const buggySrc = libSrc.replace(buggyLift, "try{if(!node.matches(':popover-open'))node.showPopover()}catch(error){console.warn('subagent-workspace-ui: active float could not enter the top layer',error)}" + OLD_LISTENER)
+  assert.notStrictEqual(buggySrc, libSrc, 'the control really is a different source (the old toggle listener is back)')
+  assert.ok(buggySrc.slice(buggySrc.indexOf('floatRef.current'), buggySrc.indexOf('floatRef.current') + 520).includes("addEventListener('toggle'"), 'the decoded control source carries the old listener (not the shipped one)')
+  const buggy = bootBundle(buggySrc.replace("return {inject:['sessions','slots','locale'],apply}", "return {inject:['sessions','slots','locale'],apply, ActiveFloat}"), {})
+  // EVERY bootBundle call pushes its loader onto `window.__ModuleLoader__` (its
+  // `apply` does), so after a control boot the SHIPPED loader must be put back —
+  // measured: without this line the loop below silently re-booted the shipped
+  // float in place of the control, and the old bug "did not reproduce".
+  globalThis.window.__ModuleLoader__ = shippedLoader
+  assert.strictEqual(typeof buggy.api.ActiveFloat, 'function', 'the control bundle exports its own float')
+  // BREAK THE LINKAGE: booting sets the module-level `api` to the CONTROL's taint
+  // (bootBundle's `apply`), and that `api` is the BACKING store of the shipped
+  // `api` binding. Left as is, `renderFloat` with `slots` undefined would render
+  // the control component while `mount()` reset a pool keyed on the control
+  // object — measured: the "control" then ran the shipped effect and the old bug
+  // did not reproduce. Point `api` back at the shipped copy BEFORE mounting the
+  // control, and give the control its own cell pool. (The shipped floats already
+  // asserted above are unaffected: effects are re-run from the render result.)
+  api = shippedApi
+  // Each copy owns its hook-cell pool: the control must start from an EMPTY one,
+  // never inherit the shipped float's cells (that would run the shipped effect).
+  buggy.api[FLOAT_CELLS_KEY] = {}
+  const buggyNode = stubNode()
+  const buggyMount = mountFloat(buggy.api, {}, buggy.api)
+  const buggyRef = floatNodes(buggyMount.out).find(n => (n.props || {}).ref)
+  assert.ok(buggyRef, 'the control float renders a ref')
+  buggyRef.props.ref.current = buggyNode
+  const buggyLiftEffect = liftOf(buggyMount.queued)
+  assert.ok(buggyLiftEffect, 'the control float queues a lift')
+  // Guard the CONTROL ITSELF: it must really be the old effect, or the assertion
+  // below would measure the shipped one and prove nothing.
+  const buggyBody = buggyLiftEffect.toString()
+  assert.ok(buggyBody.includes("addEventListener('toggle'"), 'fixture: the control effect carries the old toggle listener')
+  buggyLiftEffect()
+  assert.strictEqual((buggyNode.listeners.get('toggle') || []).length, 1, 'fixture: and installed it on the node')
+  // `toggle` is queued by the stub (the platform dispatches it asynchronously), so
+  // the self-close lands one task later — exactly when the user would see it.
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepStrictEqual(buggyNode.calls, ['show', 'hide'], 'CONTROL (old toggle listener): the float closes itself immediately after opening — the reported bug; calls=' + JSON.stringify(buggyNode.calls))
+  assert.strictEqual(buggyNode.open, false, 'CONTROL: and reports :popover-open === false, i.e. display:none on the real page — which the shipped lift no longer does')
+  // The shipped float, in the SAME harness and after the same settle, is open:
+  // the pair is the whole proof (same stub, same timing, only the code differs).
+  // A FRESH shipped node is used, because its lifecycle above already ended with
+  // the deliberate `hide` (c). Show it, keep it mounted, let the queued `toggle`
+  // land, and require it still open.
+  const proofMount = mount()
+  const proofNode = stubNode()
+  refFrom(proofMount.out).current = proofNode
+  liftOf(proofMount.mine)()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepStrictEqual(proofNode.calls, ['show'], 'SHIPPED, after the same settle: no self-close; calls=' + JSON.stringify(proofNode.calls))
+  assert.strictEqual(proofNode.open, true, 'SHIPPED: still :popover-open')
+  assert.ok(!proofNode.listeners.has('toggle'), 'SHIPPED: no toggle listener is even installed')
+  // (h) DRAG and SCROLL are carried by the same node, so they survive the lift:
   //     assert the two properties that make the drag work inside the top layer.
   const cssFloat = (libSrc.match(/\.dsh-sam-active-float\{([^}]*)\}/) || [])[1] || ''
   const cssOpen = (libSrc.match(/\.dsh-sam-active-float:popover-open\{([^}]*)\}/) || [])[1] || ''
@@ -1225,7 +1347,11 @@ results.deleteReprobeNoFalseHide = true
   const dragExpect = { left: 100, top: 200, right: 'auto' }
   const styleWinner = Object.assign({}, { left: '12px', top: '56px' }, dragExpect)
   assert.deepStrictEqual(styleWinner, dragExpect, 'inline drag style (left/top/right:auto) outranks the pinned top/right')
-  results.activeFloatTopLayer = { popover: true, control: 'no popover', show: true, hide: true, once: true, toggle: true, probed: true, css: true }
+  // (i) the same self-close trap must not exist in the g-028 backdrop either:
+  //     its effect never listens for `toggle` (only its own cleanup lowers it).
+  assert.ok(!/backdropRef[\s\S]{0,600}?addEventListener\('toggle'/.test(libSrc), 'the panel backdrop installs no toggle listener (g-028 stays as verified)')
+  assert.ok(!libSrc.includes("addEventListener('toggle'"), 'no toggle listener survives anywhere in the bundle')
+  results.activeFloatTopLayer = { popover: true, control: 'no popover', show: true, staysOpen: true, hide: true, once: true, probed: true, css: true, selfCloseControl: 'show,hide' }
 }
 
 // Every assertion above has already thrown by the time this line runs, so
