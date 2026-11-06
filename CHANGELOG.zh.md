@@ -6,6 +6,9 @@
 
 - **修复：dsh 0.2.2-rc.1 下面板被压进标题栏**。该版本给会话区域外层加了静态 `transform`（`matrix(1,0,0,1,0,0)`，视觉上毫无变化，但足以成为 `position:fixed` 后代的包含块），于是遮罩按那一列而非视口解析，面板被裁成标题栏高度。遮罩现在以 manual popover 进入 **top layer** —— 包含块唯一够不到的地方 —— 并带能力探测与 `:popover-open` 规则，抵消 UA 给 popover 的默认 margin 与 border。没有改用 `createPortal`：模块加载器对 `react-dom` 返回 `null`。
 - **测试**：`test/render.test.mjs` 对构建产物断言 popover 接线（属性、ref、能力探测的 show/hide、几何规则）；去掉该属性即变红。
+- **修复：活跃子代理浮窗**在同一宿主上同样不可见——它是 `position:fixed;top:56px;right:12px`，被标题栏那一列的 `transform` 按那一条解析后推出可视区。现在同样进入 top layer（`popover="manual"`、能力探测、`:popover-open` 几何）。与遮罩的两处差异专门处理了：浮窗是**条件渲染而非打开时挂载**，所以 lift 在挂载时执行并由 cleanup 放回，另加 `toggle` 监听，避免 UA 主动关闭后状态与 DOM 脱节；拖拽位置仍是 inline `left`/`top`（inline 优先于任何 `:popover-open` 规则），落点照旧由拖拽决定。
+- **已知行为**：两个浮层现在都在 top layer，位于所有带 z-index 的面板之上。当前二者互斥（浮窗受 `!open` 约束），不会重叠；若日后放开共存，需重新核对层叠顺序。
+- **dsh 0.2.2-rc.1+ 上的行为**：`sessionStats` 改为以 `summary: false` 注册，因此用户从未打开过的子代理，摘要里没有 tps / 轮次 / 步数。这些片段会被省略（绝不显示 0 或 `NaN`），子代理一旦被打开或 retain 即恢复；轮次/步数会回落到各自的投影键。这是宿主刻意做的摘要瘦身，插件无法临时改回：该标记写死在 `dsh-session-stats` 的定义里，而注册表会拒绝同一 key 以不同 `summary` 值二次注册。
 
 ## v1.11.1
 

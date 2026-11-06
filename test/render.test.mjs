@@ -1076,6 +1076,157 @@ results.deleteReprobeNoFalseHide = true
   assert.ok(!/className:'dsh-sam-backdrop',onMouseDown/.test(libSrc), 'CONTROL: a plain fixed backdrop (the clipped state) is what this rejects')
   results.backdropTopLayer = { popover: true, probed: true, css: true }
 }
+// The ACTIVE FLOAT has the same jail: it is `position:fixed` too, and it renders
+// inside the header fragment, so the same transformed column confines it and the
+// float disappears entirely (issue #3, float half). Same remedy, but the float is
+// conditionally PERSISTENT rather than mounted-on-open, so the assertions below
+// walk its real lifecycle: shown -> dragged -> closed -> shown again.
+{
+  const floatClass = n => String((n.props || {}).className || '').split(' ').includes('dsh-sam-active-float')
+  const floatNodes = v => v.nodes.filter(floatClass)
+  // A node that records the two lifecycle calls and the UA's `toggle` event the
+  // top-layer contract depends on (a light-dismissed popover, or one the UA
+  // closes, must be lowered deliberately rather than left stuck).
+  const stubNode = ({ api = true } = {}) => {
+    const listeners = new Map()
+    const calls = []
+    let open = false
+    return {
+      calls,
+      get open() { return open },
+      matches: sel => sel === ':popover-open' && open,
+      ...(api ? { showPopover() { calls.push('show'); open = true }, hidePopover() { calls.push('hide'); open = false } } : {}),
+      addEventListener(type, fn) { listeners.set(type, fn) },
+      removeEventListener(type) { listeners.delete(type) },
+      emit(type) { const fn = listeners.get(type); if (fn) fn() },
+      listeners,
+    }
+  }
+  // A component slot that feeds `useRef` — the only hook the float's lift uses.
+  // `slots` selects the component's own hook pool. The stable `__floatCells`
+  // pool is correct for the SHIPPED bundle (whose helpers are exported in that
+  // scope), but the CONTROL is booted separately and its helper pool must not be
+  // shared with it — two copies sharing one cell store is how a booted control
+  // silently renders the shipped component instead of its own.
+  const renderFloat = (floatApi, props, slots) => {
+    const component = slots ? floatApi.ActiveFloat : api.ActiveFloat
+    cursor = 0
+    const saved = cells
+    cells = slots ? {} : (floatApi.__floatCells || (floatApi.__floatCells = {}))
+    try { return collect(component({ t: k => zh[k] || k, rows: [], openRow() {}, onHide() {}, stopAgent() {}, stopAllAgents() {}, stoppingIds: new Set(), liveEnabled: false, onLiveChange() {}, liveCap: 0, ...props })) } finally { cells = saved }
+  }
+  // One float render cycle: the component, then the effects it queued.
+  const mountFloat = (floatApi, node, props) => {
+    const saved = effects.splice(0)
+    const out = renderFloat(floatApi, props)
+    const queued = effects.splice(0)
+    effects.push(...saved)
+    return { out, queued }
+  }
+  // The pre-fix bundle, decoded: the CONTROL must be the code without the lift.
+  assert.ok(libSrc.includes("ref:floatRef,popover:'manual',style:dragStyle"), 'the control is derived from the shipped source (the anchor it strips exists)')
+  // The CONTROL bundle exports no helper names; it is widened the same way the
+  // shipped copy was, so the harness can mount its float directly.
+  const controlSrc = libSrc.replace("ref:floatRef,popover:'manual',style:dragStyle", 'style:dragStyle')
+  assert.ok(controlSrc !== libSrc, 'the control really is a different source (the lift is stripped)')
+  const control = bootBundle(controlSrc.replace("return {inject:['sessions','slots','locale'],apply}", "return {inject:['sessions','slots','locale'],apply, ActiveFloat}"), {})
+  // (0) NEGATIVE CONTROL, on the real host shape that was reported broken: the
+  //     float renders inside a static-transform column, and without the top-layer
+  //     lift there is no popover to escape it — the float has no `popover`
+  //     attribute at all, so the column stays its containing block.
+  const controlFloat = renderFloat(control.api, {}, 'control')
+  assert.ok(floatNodes(controlFloat).length === 1, 'control: the float still renders (the bug is placement, not mounting); nodes=' + controlFloat.nodes.length)
+  const controlNode = floatNodes(controlFloat)[0]
+  assert.strictEqual(controlNode.props.popover, undefined, 'CONTROL: the pre-fix float carries no popover, so the transformed column is its containing block and it is clipped into the header')
+  assert.strictEqual(controlNode.props.ref, undefined, 'CONTROL: and holds no ref, so nothing could lift it')
+  // (1) The shipped float is a manual popover with a ref.
+  const first = mountFloat(api, stubNode(), {})
+  const shipped = floatNodes(first.out)
+  assert.strictEqual(shipped.length, 1, 'the active float renders once')
+  assert.strictEqual(shipped[0].props.popover, 'manual', 'the float is a manual popover')
+  assert.strictEqual(typeof shipped[0].props.ref, 'object', 'and carries a ref so the effect can reach the DOM node')
+  assert.strictEqual(shipped[0].tag, 'aside', 'still the aside the plugin always rendered (role=status surface)')
+  // The float's own hooks get their own slot pool (fresh mount).
+  const mount = () => {
+    api.__floatCells = {}
+    const saved = effects.splice(0)
+    const out = renderFloat(api, {})
+    const mine = effects.splice(0)
+    effects.push(...saved)
+    return { out, mine }
+  }
+  // The harness's stateless `useRef` hands out a NEW object per render, while
+  // React keeps one per element lifetime. So the harness drives the effect with
+  // the ref the float rendered for THAT commit, exactly once per mount.
+  const refFrom = out => { const withRef = floatNodes(out).find(n => (n.props || {}).ref); assert.ok(withRef, 'the float renders a ref'); return withRef.props.ref }
+  // (a) first appearance: the lift effect is present and lifts the node.
+  const mountNode = stubNode()
+  const firstMount = mount()
+  const refNow = refFrom(firstMount.out)
+  assert.ok(refNow && 'current' in refNow, 'the ref is a React ref object')
+  refNow.current = mountNode
+  const lift = firstMount.mine.find(e => e.toString().includes('showPopover'))
+  assert.ok(lift, 'the float queues a top-layer lift effect: ' + firstMount.mine.map(e => e.toString().slice(0, 40)))
+  const unmount = lift()
+  assert.deepStrictEqual(mountNode.calls, ['show'], 'the float enters the top layer when it first appears; calls=' + JSON.stringify(mountNode.calls))
+  assert.ok(mountNode.listeners.has('toggle'), 'and listens for the UA `toggle` so a popover it closes is lowered on purpose')
+  // (b) A RE-RENDER (the 1 s tick, a live-output update, a drag) must not
+  //     re-run the lift: it is queued with an empty dep list, i.e. once per
+  //     element lifetime, never per paint.
+  const second = mount()
+  refFrom(second.out).current = stubNode()
+  const liftAgain = second.mine.filter(e => e.toString().includes('showPopover'))
+  assert.strictEqual(liftAgain.length, 1, 'every render still queues exactly the one lift effect (stable identity, empty deps)')
+  assert.strictEqual(liftAgain[0].toString(), lift.toString(), 'and it is the same effect body, queued with an empty dep list, so React runs it once per mount rather than per paint')
+  // (c) the float is hidden by its own fixed reference: the conditional render
+  //     drops the aside, so the cleanup must LOWER it — a stuck `popover-open`
+  //     node would be the same jail with extra steps.
+  assert.strictEqual(typeof unmount, 'function', 'the lift effect returns a cleanup')
+  unmount()
+  assert.deepStrictEqual(mountNode.calls, ['show', 'hide'], 'hiding the float lowers it again; calls=' + JSON.stringify(mountNode.calls))
+  assert.strictEqual(mountNode.open, false, 'and the DOM node really reports closed')
+  // (d) it comes back (a child starts running again): a fresh node, a fresh lift.
+  //     A re-mount starts from empty slots, exactly like React.
+  const backNode = stubNode()
+  const backMount = mount()
+  refFrom(backMount.out).current = backNode
+  const backCleanup = backMount.mine.find(e => e.toString().includes('showPopover'))()
+  assert.deepStrictEqual(backNode.calls, ['show'], 'the float re-enters the top layer when it reappears; calls=' + JSON.stringify(backNode.calls))
+  assert.strictEqual(typeof backCleanup, 'function', 'and holds a cleanup of its own')
+  // (e) the UA closes the popover by itself (light dismiss, a re-parent, a
+  //     fullscreen change): the toggle listener lowers it deliberately so the
+  //     state and the DOM agree instead of leaving a stale `popover-open`.
+  backNode.emit('toggle')
+  assert.ok(backNode.calls.includes('hide'), 'a UA-initiated close is mirrored into hidePopover; calls=' + JSON.stringify(backNode.calls))
+  // (f) CAPABILITY PROBE: a host without the popover API keeps the plain fixed
+  //     float — no crash, no half-lifted state.
+  const legacy = stubNode({ api: false })
+  assert.ok(legacy.showPopover === undefined && legacy.hidePopover === undefined, 'fixture: this node has no popover API')
+  const legacyMount = mount()
+  // The probe runs BEFORE any API call, so no ref wiring is needed here.
+  const legacyLift = legacyMount.mine.find(e => e.toString().includes('showPopover'))
+  assert.strictEqual(legacyLift(), undefined, 'no popover API => the lift effect is inert (returns nothing)')
+  assert.deepStrictEqual(legacy.calls, [], 'and it never calls a missing API; calls=' + JSON.stringify(legacy.calls))
+  // (g) DRAG and SCROLL are carried by the same node, so they survive the lift:
+  //     assert the two properties that make the drag work inside the top layer.
+  const cssFloat = (libSrc.match(/\.dsh-sam-active-float\{([^}]*)\}/) || [])[1] || ''
+  const cssOpen = (libSrc.match(/\.dsh-sam-active-float:popover-open\{([^}]*)\}/) || [])[1] || ''
+  assert.ok(/position:fixed/.test(cssOpen), 'the open state stays fixed (the UA would otherwise make it a centred box)')
+  assert.ok(/margin:0/.test(cssOpen), 'the UA popover margin (-6.857px -13.714px …) is cleared')
+  assert.ok(/border:1px solid/.test(cssOpen), 'the UA popover border (2.857px) is replaced by the float\'s own 1px')
+  assert.ok(/top:56px/.test(cssOpen) && /right:12px/.test(cssOpen), 'the viewport geometry (top:56px / right:12px) is restated')
+  assert.ok(/left:auto/.test(cssOpen) && /bottom:auto/.test(cssOpen), 'and the UA `inset` is pinned so a dragged inline `left` is not fought by a UA default')
+  assert.ok(/max-height:calc\(100vh - 24px\)/.test(cssOpen), 'max-height resolves against the viewport in the top layer')
+  assert.ok(/overflow:auto/.test(cssOpen), 'and the body still scrolls')
+  assert.ok(/max-height:calc\(100vh - 24px\)/.test(cssFloat) && /overflow:auto/.test(cssFloat), 'the plain fixed fallback keeps the same height/scroll contract')
+  // The inline style the drag writes is the one that wins in the top layer: an
+  // inline declaration beats every selector rule, so `left/top` + `right:auto`
+  // land exactly where the pointer put them.
+  const dragExpect = { left: 100, top: 200, right: 'auto' }
+  const styleWinner = Object.assign({}, { left: '12px', top: '56px' }, dragExpect)
+  assert.deepStrictEqual(styleWinner, dragExpect, 'inline drag style (left/top/right:auto) outranks the pinned top/right')
+  results.activeFloatTopLayer = { popover: true, control: 'no popover', show: true, hide: true, once: true, toggle: true, probed: true, css: true }
+}
 
 // Every assertion above has already thrown by the time this line runs, so
 // reaching it means the harness passed: exit 0 explicitly, because the plugin's
