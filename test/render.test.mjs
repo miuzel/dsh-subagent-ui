@@ -1354,6 +1354,26 @@ const FLOAT_CELLS_KEY = '__floatCells'
   results.activeFloatTopLayer = { popover: true, control: 'no popover', show: true, staysOpen: true, hide: true, once: true, probed: true, css: true, selfCloseControl: 'show,hide' }
 }
 
+// g-032: the injected markdown prompt preview sits slightly narrower than the
+// content column and right-aligned, so it no longer presses against the whole
+// column. It is plain CSS, so the assertions read the DECODED bundle and pin the
+// exact declarations; the control strips them and requires the same predicate to
+// reject, which is what makes the assertion able to fail.
+const promptBaseCss = (libSrc.match(/\.dsh-sam-prompt\{position:relative;([^}]*)\}/) || [])[1] || ''
+const promptNarrowOk = css => /width:calc\(100% - 32px\)/.test(css) && /box-sizing:border-box/.test(css) && /max-width:100%/.test(css) && /margin-left:auto/.test(css) && !/100vw/.test(css) && !/position:fixed/.test(css)
+assert.ok(promptNarrowOk(promptBaseCss), 'g-032: .dsh-sam-prompt is content-width minus 32px, border-box and right-aligned; got: ' + promptBaseCss)
+const promptMediaCss = (libSrc.match(/@media\(max-width:560px\)\{[^@]*?\.dsh-sam-prompt\{width:100%;margin-left:0[^@]*?\}\}/) || [])[0] || ''
+assert.ok(promptMediaCss.length > 0, 'g-032: at <=560px the preview falls back to the full column width')
+// Source order matters here: an equal-specificity media rule placed BEFORE the
+// base rule is simply overridden by it (measured on the real page), so the
+// fallback must come after.
+const promptBaseAt = libSrc.indexOf('.dsh-sam-prompt{position:relative;')
+const promptFallbackAt = libSrc.indexOf('.dsh-sam-prompt{width:100%;margin-left:0')
+assert.ok(promptBaseAt >= 0 && promptFallbackAt > promptBaseAt, 'g-032: the <=560px fallback follows the base rule in source order')
+const strippedPromptCss = promptBaseCss.replace(/;?(box-sizing:border-box|max-width:100%|width:calc\(100% - 32px\)|margin-left:auto)/g, '')
+assert.ok(!promptNarrowOk(strippedPromptCss), 'g-032 control: stripping the new declarations makes the same assertion reject')
+results.promptNarrow = { css: true, media: true, control: true }
+
 // Every assertion above has already thrown by the time this line runs, so
 // reaching it means the harness passed: exit 0 explicitly, because the plugin's
 // pollers leave live timers behind and the event loop would otherwise never

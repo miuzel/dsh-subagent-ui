@@ -39,7 +39,8 @@ body[data-ds-dark-theme] .dsh-sam-row-hidden{background:rgba(255,255,255,0.03)!i
 .dsh-sam-active-icon.dsh-sam-active-icon-ext{color:var(--dsw-alias-interactive-label-brand,#4f7cf7)}
 .dsh-sam-prompt-host{display:none}
 .dsh-sam-prompt-hide{display:none!important}
-.dsh-sam-prompt{position:relative;margin-top:6px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
+.dsh-sam-prompt{position:relative;margin-top:6px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);overflow:hidden;box-sizing:border-box;max-width:100%;width:calc(100% - 32px);margin-left:auto}
+@media(max-width:560px){.dsh-sam-prompt{width:100%;margin-left:0}}
 .dsh-sam-prompt-block-hidden{display:none!important}
 .dsh-sam-prompt-bar{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;padding:4px 8px 0}
 .dsh-sam-prompt-tab,.dsh-sam-prompt-fold{border:1px solid transparent;background:0 0;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:11px;line-height:16px;padding:2px 8px;border-radius:6px;cursor:pointer}
