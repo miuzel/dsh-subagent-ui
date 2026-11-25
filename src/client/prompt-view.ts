@@ -20,17 +20,43 @@
 // only then by position (tail-aligned, because a bounded window is a tail page).
 // A node with no event copy gets an explicit notice, never a guess.
 
+import { load } from './bootstrap'
 import { PROMPT_FOLD_CHARS, PROMPT_FOLD_LINES, PROMPT_RENDER_MAX_CHARS, promptBodyInto } from './markdown'
 import { liveBindingFor } from './retain'
 import { zh, en } from './i18n'
 import type { PromptMessage, PromptPreviewProps, SessionEventWindow, Tr } from './types'
 
-/* Per-node user choice. Rendered is the default, so absence means 「渲染」. */
+/* Per-node user choice. An absent key means the CURRENT global default. */
 export const promptMode = new Map<string, string>()
 /* Long prompts fold by default; a key listed here has been expanded by hand. */
 export const promptUnfolded = new Set<string>()
 export const PROMPT_MODE_RENDERED = 'rendered'
 export const PROMPT_MODE_RAW = 'raw'
+// The global default (g-030): what a message lands on when the user made no
+// per-message choice. Read from the saved prefs once at module init, so the very
+// first attach already renders in the stored default (the manager's effect may
+// mount after the chat view). The manager stays the ONLY writer of the prefs
+// record; this module only reads it here and then takes every later change from
+// `promptSetDefaultMode`, which the manager calls on each switch.
+const promptSavedDefault = () => (load().promptPreview === false ? PROMPT_MODE_RAW : PROMPT_MODE_RENDERED)
+let promptDefaultMode = promptSavedDefault()
+export const promptDefaultModeOf = () => promptDefaultMode
+export const promptSetDefaultMode = (mode: string) => {
+  const next = mode === PROMPT_MODE_RAW ? PROMPT_MODE_RAW : PROMPT_MODE_RENDERED
+  if (next === promptDefaultMode) return
+  promptDefaultMode = next
+  // Every per-message choice was made against the PREVIOUS default, so a switch
+  // drops them all: 「关」→「开」must not leave a message pinned to raw, and
+  // 「开」→「关」must not leave one pinned to rendered.
+  promptMode.clear()
+}
+/* One reader for a message's effective state: an explicit choice wins, absence is
+ * the current global default — never a hard-coded rendered. */
+const promptModeOf = (key: string) => {
+  const own = promptMode.get(key)
+  if (own === PROMPT_MODE_RAW || own === PROMPT_MODE_RENDERED) return own
+  return promptDefaultMode
+}
 /* Own attribute namespace; every selector below is scoped to it. */
 export const PROMPT_BLOCK_ATTR = 'data-dsh-sam-prompt-block'
 export const PROMPT_HIDE_CLASS = 'dsh-sam-prompt-hide'
@@ -379,7 +405,7 @@ const promptActionAnchor = (node: Element) => {
 // next to a dead fold control.
 export const promptApplyTrigger = (trigger: Element, tr: Tr) => {
   const key = trigger.getAttribute('data-dsh-sam-prompt-key') || ''
-  const state = promptMode.get(key) === PROMPT_MODE_RAW ? PROMPT_MODE_RAW : PROMPT_MODE_RENDERED
+  const state = promptModeOf(key)
   trigger.setAttribute('data-dsh-sam-prompt-state', state)
   trigger.classList.toggle(PROMPT_TRIGGER_ON_CLASS, state === PROMPT_MODE_RAW)
   const label = tr('prompt.previewAria')
@@ -549,7 +575,7 @@ export const promptBlockSignature = (spec: PromptBlockSpec) => {
 // never show a toolbar whose fold control has nothing left to fold.
 export const promptApplyState = (block: Element, tr: Tr) => {
   const key = block.getAttribute('data-dsh-sam-prompt-key') || ''
-  const state = promptMode.get(key) === PROMPT_MODE_RAW ? PROMPT_MODE_RAW : PROMPT_MODE_RENDERED
+  const state = promptModeOf(key)
   const rendered = state === PROMPT_MODE_RENDERED
   block.setAttribute('data-dsh-sam-prompt-state', state)
   block.classList.toggle(PROMPT_BLOCK_HIDDEN_CLASS, !rendered)

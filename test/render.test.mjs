@@ -18,6 +18,9 @@ let storedPrefs = null
 globalThis.localStorage = { getItem: () => storedPrefs, setItem: (k, v) => { storedPrefs = v } }
 globalThis.window = { confirm: () => true, alert: () => {}, prompt: () => null, innerWidth: 1200, innerHeight: 800 }
 let ledgerPayload = { ok: true, active: [], ended: [] }
+// The live-binding face the prompt-preview attach reads (`sessionsRt.binding`).
+// Mutable so the prompt section can hand it one child session's feed.
+let promptBindingFor = () => null
 globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ledgerPayload })
 
 let viewDebug = process.env.DEBUG_VIEW === '1'
@@ -92,7 +95,7 @@ const libSrc = (() => {
   return body.slice(0, exportsReturn) + 'return ' + body.slice(exportsReturn).replace(/^\s+return /, '')
 })()
 const footer = "    return {inject:['sessions','slots','locale'],apply}"
-const scopeSrc = src.replace(footer, `${footer.slice(0, -1)}, ActiveFloat, catalogEntriesOf, modeMap, childModeOf, externalRowsOf, deletedExternalOf, EXTERNAL_REMOVED_LIMIT, externalRemovedCap, externalRemovedAdd, sessionEntitiesOf, absentRowOf}`)
+const scopeSrc = src.replace(footer, `${footer.slice(0, -1)}, ActiveFloat, catalogEntriesOf, modeMap, childModeOf, externalRowsOf, deletedExternalOf, EXTERNAL_REMOVED_LIMIT, externalRemovedCap, externalRemovedAdd, sessionEntitiesOf, absentRowOf, promptPreviewAttach, promptApplyState, promptApplyTrigger, promptSetMode, promptRefreshKey, promptPreviewRefresh, promptDefaultModeOf, promptSetDefaultMode, promptMode, PROMPT_MODE_RAW, PROMPT_MODE_RENDERED, PROMPT_BLOCK_ATTR, PROMPT_TRIGGER_ATTR, PROMPT_HIDE_CLASS, PROMPT_TRIGGER_ON_CLASS}`)
 let api = null
 // The loader the SHIPPED copy was booted through; every control boot replaces
 // `window.__ModuleLoader__`, so each control restores this one afterwards.
@@ -105,7 +108,7 @@ const registrations = []
 let state = { byId: {}, current: 'p1' }
 const shippedApi = api
 api.apply({
-  sessions: { list: { getSnapshot: () => ({ byId: state.byId, current: state.current }) }, binding: () => null },
+  sessions: { list: { getSnapshot: () => ({ byId: state.byId, current: state.current }) }, binding: id => promptBindingFor(id) },
   effect: fn => { try { fn() } catch {} },
   locale: { register: (ns, d) => { dicts[ns] = d } },
   slots: { inject: (slot, f) => { f() }, register: (config, component) => { registrations.push({ config, component }) } },
@@ -135,7 +138,7 @@ function bootBundle(source, options) {
   const controlRegistrations = []
   runnerApi.__registrations = controlRegistrations
   runnerApi.apply({
-    sessions: { list: { getSnapshot: () => ({ byId: state.byId, current: state.current }) }, binding: () => null },
+    sessions: { list: { getSnapshot: () => ({ byId: state.byId, current: state.current }) }, binding: id => promptBindingFor(id) },
     effect: fn => { try { fn() } catch {} },
     locale: { register: (ns, d) => { controlDicts[ns] = d } },
     slots: { inject: (slot, f) => { f() }, register: (config, component) => { controlRegistrations.push({ config, component }) } },
@@ -1352,6 +1355,431 @@ const FLOAT_CELLS_KEY = '__floatCells'
   assert.ok(!/backdropRef[\s\S]{0,600}?addEventListener\('toggle'/.test(libSrc), 'the panel backdrop installs no toggle listener (g-028 stays as verified)')
   assert.ok(!libSrc.includes("addEventListener('toggle'"), 'no toggle listener survives anywhere in the bundle')
   results.activeFloatTopLayer = { popover: true, control: 'no popover', show: true, staysOpen: true, hide: true, once: true, probed: true, css: true, selfCloseControl: 'show,hide' }
+}
+
+/* ================================================================== */
+/* g-030: the prompt-preview default switch (semantics B). The preview   */
+/* is DOM injection rather than React, so this section installs a        */
+/* minimal DOM with exactly the APIs the attach path uses, renders the   */
+/* REAL manager to drive the preference, and asserts the injected tree.  */
+/* ================================================================== */
+const promptTr = (key, params) => {
+  const template = zh[key] !== undefined ? zh[key] : `<${key}>`
+  return params ? template.replace(/\{(\w+)\}/g, (_, name) => String(params[name] === undefined ? `{${name}}` : params[name])) : template
+}
+class DomText {
+  constructor(value) { this.nodeType = 3; this.nodeValue = String(value); this.parentNode = null; this.childNodes = []; this.children = [] }
+  get textContent() { return this.nodeValue }
+  set textContent(value) { this.nodeValue = String(value) }
+}
+class DomClassList {
+  constructor(el) { this.el = el }
+  add(...names) { for (const name of names) this.el._classes.add(name) }
+  remove(...names) { for (const name of names) this.el._classes.delete(name) }
+  contains(name) { return this.el._classes.has(name) }
+  toggle(name, force) {
+    const on = force === undefined ? !this.el._classes.has(name) : Boolean(force)
+    if (on) this.el._classes.add(name)
+    else this.el._classes.delete(name)
+    return on
+  }
+}
+const domMatchesCompound = (el, part) => {
+  if (!el || el.nodeType !== 1) return false
+  const pattern = /([a-zA-Z][\w-]*)|\.([\w-]+)|\[([\w-]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\]\s]*)))?\]/g
+  let match = null
+  let seen = 0
+  while ((match = pattern.exec(part))) {
+    seen += match[0].length
+    if (match[1]) { if (el.tagName !== match[1].toUpperCase()) return false; continue }
+    if (match[2]) { if (!el.classList.contains(match[2])) return false; continue }
+    if (!el.hasAttribute(match[3])) return false
+    const value = match[4] !== undefined ? match[4] : match[5] !== undefined ? match[5] : match[6]
+    if (value !== undefined && value !== '' && el.getAttribute(match[3]) !== value) return false
+  }
+  return seen > 0
+}
+const domMatches = (el, selector) => {
+  if (!selector || !el || el.nodeType !== 1) return false
+  for (const group of String(selector).split(',')) {
+    const parts = group.trim().split(/\s+/).filter(Boolean)
+    if (!parts.length) continue
+    if (!domMatchesCompound(el, parts[parts.length - 1])) continue
+    let index = parts.length - 2
+    let node = el.parentNode
+    while (index >= 0 && node) {
+      if (node.nodeType === 1 && domMatchesCompound(node, parts[index])) index -= 1
+      node = node.parentNode
+    }
+    if (index < 0) return true
+  }
+  return false
+}
+class DomElement {
+  constructor(tag) {
+    this.nodeType = 1
+    this.tagName = String(tag).toUpperCase()
+    this.childNodes = []
+    this.parentNode = null
+    this._attrs = new Map()
+    this._classes = new Set()
+    this._listeners = new Map()
+    this._classList = new DomClassList(this)
+    this.dataset = {}
+    this.scrollTop = 0
+    this.scrollHeight = 0
+    this.clientHeight = 0
+    this.clientWidth = 0
+  }
+  get classList() { return this._classList }
+  get className() { return [...this._classes].join(' ') }
+  set className(value) { this._classes = new Set(String(value).split(/\s+/).filter(Boolean)) }
+  get children() { return this.childNodes.filter(node => node.nodeType === 1) }
+  get parentElement() { return this.parentNode && this.parentNode.nodeType === 1 ? this.parentNode : null }
+  get textContent() { return this.childNodes.map(node => node.textContent).join('') }
+  set textContent(value) { this.childNodes = []; if (String(value) !== '') this.appendChild(new DomText(value)) }
+  setAttribute(name, value) { this._attrs.set(String(name), String(value)) }
+  getAttribute(name) { return this._attrs.has(String(name)) ? this._attrs.get(String(name)) : null }
+  hasAttribute(name) { return this._attrs.has(String(name)) }
+  removeAttribute(name) { this._attrs.delete(String(name)) }
+  appendChild(node) { if (node.parentNode) node.parentNode.removeChild(node); node.parentNode = this; this.childNodes.push(node); return node }
+  insertBefore(node, ref) {
+    const index = ref ? this.childNodes.indexOf(ref) : -1
+    if (index < 0) return this.appendChild(node)
+    if (node.parentNode) node.parentNode.removeChild(node)
+    node.parentNode = this
+    this.childNodes.splice(index, 0, node)
+    return node
+  }
+  removeChild(node) {
+    const index = this.childNodes.indexOf(node)
+    if (index >= 0) this.childNodes.splice(index, 1)
+    if (node.parentNode === this) node.parentNode = null
+    return node
+  }
+  remove() { if (this.parentNode) this.parentNode.removeChild(this) }
+  after(node) {
+    const parent = this.parentNode
+    if (!parent) return
+    const index = parent.childNodes.indexOf(this)
+    if (node.parentNode) node.parentNode.removeChild(node)
+    node.parentNode = parent
+    parent.childNodes.splice(index + 1, 0, node)
+  }
+  get isConnected() { let node = this; while (node) { if (node === globalThis.document.body) return true; node = node.parentNode } return false }
+  addEventListener(type, handler) { if (!this._listeners.has(type)) this._listeners.set(type, []); this._listeners.get(type).push(handler) }
+  dispatch(type, event) { for (const handler of (this._listeners.get(type) || []).slice()) handler(event || {}) }
+  matches(selector) { return domMatches(this, selector) }
+  closest(selector) { let node = this; while (node) { if (node.nodeType === 1 && domMatches(node, selector)) return node; node = node.parentNode } return null }
+  contains(node) { let current = node; while (current) { if (current === this) return true; current = current.parentNode } return false }
+  querySelectorAll(selector) {
+    const out = []
+    const visit = node => { for (const child of node.childNodes) { if (child.nodeType !== 1) continue; if (domMatches(child, selector)) out.push(child); visit(child) } }
+    visit(this)
+    return out
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null }
+  getBoundingClientRect() { return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 } }
+}
+class DomMutationObserver {
+  constructor(handler) { this.handler = handler }
+  observe() {}
+  disconnect() {}
+  takeRecords() { return [] }
+}
+const installPromptDom = () => {
+  const body = new DomElement('body')
+  const doc = {
+    body,
+    head: new DomElement('head'),
+    scrollingElement: null,
+    createElement: tag => new DomElement(tag),
+    createTextNode: value => new DomText(value),
+    querySelectorAll: selector => body.querySelectorAll(selector),
+    querySelector: selector => body.querySelector(selector),
+    getElementById: id => body.querySelectorAll('[id]').find(node => node.getAttribute('id') === id) || null,
+  }
+  globalThis.document = doc
+  globalThis.window.document = doc
+  globalThis.Element = DomElement
+  globalThis.MutationObserver = DomMutationObserver
+  globalThis.window.getComputedStyle = () => ({ overflowY: 'visible' })
+  return doc
+}
+// One user message as the host renders it: the official node (its own slot) plus
+// the action row that carries the copy affordance the chip anchors to.
+const promptConversationOf = (doc, sessionId, messages) => {
+  const content = doc.createElement('div')
+  content.setAttribute('data-conversation-content', '')
+  content.setAttribute('data-conversation-session', sessionId)
+  const scroll = doc.createElement('div')
+  scroll.setAttribute('data-conversation-scroll', '')
+  content.appendChild(scroll)
+  doc.body.appendChild(content)
+  const views = messages.map(message => {
+    const node = doc.createElement('div')
+    node.setAttribute('data-chat-flow-kind', 'user')
+    node.setAttribute('data-chat-node-key', message.key)
+    const official = doc.createElement('div')
+    official.setAttribute('data-slot', 'conversation.chat.node')
+    const body = doc.createElement('span')
+    body.setAttribute('data-context-text', 'true')
+    body.textContent = message.body === undefined ? message.text : message.body
+    official.appendChild(body)
+    const row = doc.createElement('div')
+    row.setAttribute('data-clock', '')
+    const copy = doc.createElement('button')
+    copy.setAttribute('aria-label', '复制')
+    copy.textContent = '复制'
+    row.appendChild(copy)
+    node.appendChild(official)
+    node.appendChild(row)
+    scroll.appendChild(node)
+    return { node, official, body, row, copy }
+  })
+  return { content, scroll, views }
+}
+const promptFeedOf = messages => ({
+  eventSource: {
+    getSnapshot: () => ({
+      entries: messages.map((message, index) => ({
+        type: 'event',
+        event: { type: 'user/message', surfaceOp: 'append', seq: index + 1, data: { id: message.id, source: { kind: 'user' }, content: [{ type: 'text', text: message.text }] } },
+      })),
+    }),
+    subscribe: () => () => {},
+  },
+})
+const promptCheckboxFor = (view, label) => {
+  for (const node of view.nodes) {
+    if (node.tag !== 'label' || !Array.isArray(node.props.children)) continue
+    const input = node.props.children.find(child => child && child.tag === 'input')
+    const text = node.props.children.filter(child => typeof child === 'string').join('')
+    if (input && text === label) return input
+  }
+  return null
+}
+const promptBlocksOf = doc => doc.querySelectorAll('[data-dsh-sam-prompt-block]')
+const promptChipsOf = doc => doc.querySelectorAll('[data-dsh-sam-prompt-trigger]')
+const promptStateOf = block => block.getAttribute('data-dsh-sam-prompt-state')
+const promptBlocksHidden = block => block.classList.contains('dsh-sam-prompt-block-hidden')
+const PROMPT_SESSION = 'session-c1'
+const PROMPT_SESSION_2 = 'session-c2'
+const promptMessages = [
+  { id: 'm1', key: '1:input-messagem1', text: '# 标题\n\n第一段 **粗体** 文本。' },
+  { id: 'm2', key: '2:input-messagem2', text: '第二条消息，含 `code`。' },
+]
+const promptFeed = promptFeedOf(promptMessages)
+const dualStateFor = () => ({
+  byId: { ...stateFor().byId, [PROMPT_SESSION_2]: { id: PROMPT_SESSION_2, parentId: 'p1', origin: 'subagent', title: 'second child', cwd: '/work', updatedAt: Date.now() } },
+  current: 'p1',
+  projectionsBySession: stateFor().projectionsBySession,
+})
+
+// ---- C7: the switch has exactly ONE writer (the manager) ------------------
+{
+  const seed = { tabs: [{ id: 'tab-custom', name: '自定义', regex: '^审计' }], archived: ['session-ghost'], archivedParents: { 'session-ghost': 'p1' }, removedExternal: ['ext-ghost'], showArchived: true, hideOneShot: true, hideOld: true, oldDays: 12, liveCap: 2, activeFloat: false, activeFloatLive: false, customSubagentBg: true, subagentBgLight: '#112233', subagentBgDark: '#445566', filterCollapsed: false, showDetails: false }
+  storedPrefs = JSON.stringify(seed)
+  let view = await commit(stateFor(), { open: true }, true)
+  const box = promptCheckboxFor(view, zh.promptPreview)
+  assert.ok(box, 'C7: the prompt-preview checkbox renders with its own localized label')
+  assert.strictEqual(box.props.checked, true, 'C7: an absent key reads as ON')
+  box.props.onChange()
+  await commit(stateFor(), { open: true })
+  assert.deepStrictEqual(JSON.parse(storedPrefs), { ...seed, promptPreview: false }, 'C7: every pre-existing prefs field survives the switch byte-for-byte, the switch adds only its own key')
+  view = await commit(stateFor(), { open: true }, true)
+  assert.strictEqual(promptCheckboxFor(view, zh.promptPreview).props.checked, false, 'C7: a remount (page refresh) reads the stored OFF state back')
+  assert.deepStrictEqual(JSON.parse(storedPrefs), { ...seed, promptPreview: false }, 'C7: the remount neither drops nor rewrites a stored field')
+  results.promptPreviewPrefs = { preserved: true, onlyKey: 'promptPreview' }
+}
+
+// ---- C1: a stored prefs record without the key keeps v1.10.0 behaviour -----
+const promptDoc = installPromptDom()
+state = stateFor()
+storedPrefs = JSON.stringify({ filterCollapsed: false, showDetails: false })
+api.promptSetDefaultMode(api.PROMPT_MODE_RAW)
+api.promptMode.clear()
+let promptManagerView = await commit(stateFor(), { open: true }, true)
+assert.strictEqual(api.promptDefaultModeOf(), api.PROMPT_MODE_RENDERED, 'C1: a prefs record without promptPreview means ON')
+promptBindingFor = id => (id === PROMPT_SESSION ? promptFeed : null)
+const promptConversation = promptConversationOf(promptDoc, PROMPT_SESSION, promptMessages)
+const promptAnchor = promptDoc.createElement('span')
+promptAnchor.className = 'dsh-sam-prompt-host'
+promptDoc.body.appendChild(promptAnchor)
+let promptDispose = api.promptPreviewAttach(promptAnchor, PROMPT_SESSION, () => promptTr)
+let promptBlocks = promptBlocksOf(promptDoc)
+let promptChips = promptChipsOf(promptDoc)
+assert.strictEqual(promptBlocks.length, 2, 'C1: one preview block per user message; got ' + promptBlocks.length)
+assert.strictEqual(promptChips.length, 2, 'C1: one 「渲染/原文」 chip per user message')
+for (const block of promptBlocks) {
+  assert.strictEqual(promptStateOf(block), 'rendered', 'C1: the default landing state is rendered')
+  assert.ok(!promptBlocksHidden(block), 'C1: the block is visible')
+  assert.ok(block.querySelector('[data-dsh-sam-prompt-body]'), 'C1: the markdown body exists')
+}
+assert.ok(promptBlocks[0].textContent.includes('标题') && promptBlocks[0].textContent.includes('粗体'), 'C1: the markdown body is the message text')
+for (const view of promptConversation.views) assert.ok(view.official.classList.contains('dsh-sam-prompt-hide'), 'C1: the official node is hidden exactly as before')
+for (const chip of promptChips) assert.ok(!chip.classList.contains('dsh-sam-prompt-trigger-on'), 'C1: the chip keeps its rendered-state form')
+
+// ---- C2: switch OFF — no reload, blocks to raw, chips kept (B, not A) -----
+const promptBlocksBeforeSwitch = promptBlocks.slice()
+promptCheckboxFor(promptManagerView, zh.promptPreview).props.onChange()
+promptManagerView = await commit(stateFor(), { open: true })
+assert.strictEqual(api.promptDefaultModeOf(), api.PROMPT_MODE_RAW, 'C2: the switch reaches the prompt module without a reload')
+assert.strictEqual(JSON.parse(storedPrefs).promptPreview, false, 'C2: the manager is the single writer and persisted the switch')
+promptBlocks = promptBlocksOf(promptDoc)
+promptChips = promptChipsOf(promptDoc)
+assert.strictEqual(promptBlocks.length, 2, 'C2: both blocks stay in the document')
+assert.ok(promptBlocks.every((block, index) => block === promptBlocksBeforeSwitch[index]), 'C2: the same block elements were restyled, not rebuilt')
+for (const block of promptBlocks) {
+  assert.strictEqual(promptStateOf(block), 'raw', 'C2: every block lands on the raw default')
+  assert.ok(promptBlocksHidden(block), 'C2: the block is hidden')
+}
+for (const view of promptConversation.views) assert.ok(!view.official.classList.contains('dsh-sam-prompt-hide'), 'C2: no dsh-sam-prompt-hide residue — the official text is visible')
+assert.strictEqual(promptChips.length, 2, 'C2: the 「渲染/原文」 chips still exist (proves B, not A)')
+for (const chip of promptChips) assert.ok(chip.classList.contains('dsh-sam-prompt-trigger-on'), 'C2: the raw state shows the 「预览」 chip')
+
+// ---- C3: one message switched back to rendered, in memory only ------------
+const chipForM1 = promptChips.find(chip => chip.getAttribute('data-dsh-sam-prompt-key') === '1:input-messagem1')
+assert.ok(chipForM1, 'C3: the first message has its own chip')
+const prefsBeforePerMessage = storedPrefs
+chipForM1.dispatch('pointerdown', {})
+assert.strictEqual(promptStateOf(promptBlocks[0]), 'rendered', 'C3: only the clicked message switches to rendered')
+assert.ok(!promptBlocksHidden(promptBlocks[0]), 'C3: its block is visible')
+assert.ok(promptConversation.views[0].official.classList.contains('dsh-sam-prompt-hide'), 'C3: its official node is hidden')
+assert.strictEqual(promptStateOf(promptBlocks[1]), 'raw', 'C3: the other message stays raw')
+assert.ok(promptBlocksHidden(promptBlocks[1]), 'C3: its block stays hidden')
+assert.ok(!promptConversation.views[1].official.classList.contains('dsh-sam-prompt-hide'), 'C3: its official node stays visible')
+assert.strictEqual(storedPrefs, prefsBeforePerMessage, 'C3: a per-message choice never writes localStorage')
+assert.strictEqual(api.promptMode.get('1:input-messagem1'), 'rendered', 'C3: the override lives in the in-memory map')
+
+// ---- C3/C5: a reload (cold module boot) reads the saved pref, not the map --
+promptDispose()
+const freshPromptApi = bootBundle(libSrc.replace("return {inject:['sessions','slots','locale'],apply}", "return {inject:['sessions','slots','locale'],apply, promptPreviewAttach, promptDefaultModeOf, promptMode, PROMPT_MODE_RAW, PROMPT_MODE_RENDERED}"), {})
+globalThis.window.__ModuleLoader__ = shippedLoader
+api = shippedApi
+assert.strictEqual(freshPromptApi.api.promptDefaultModeOf(), 'raw', 'C5: a cold boot reads the saved OFF preference at module init')
+assert.strictEqual(freshPromptApi.api.promptMode.size, 0, 'C3: a reload drops the per-message override — it is memory only')
+const freshAnchor = promptDoc.createElement('span')
+promptDoc.body.appendChild(freshAnchor)
+const freshDispose = freshPromptApi.api.promptPreviewAttach(freshAnchor, PROMPT_SESSION, () => promptTr)
+const freshBlocks = promptBlocksOf(promptDoc)
+assert.strictEqual(freshBlocks.length, 2, 'C5: the preview is re-injected after the reload')
+for (const block of freshBlocks) assert.strictEqual(promptStateOf(block), 'raw', 'C5: every message is raw by default after the reload')
+for (const view of promptConversation.views) assert.ok(!view.official.classList.contains('dsh-sam-prompt-hide'), 'C5: no hide residue after the reload')
+freshDispose()
+
+// ---- C4: switch back ON — live, and it clears every per-message override ---
+promptDispose = api.promptPreviewAttach(promptAnchor, PROMPT_SESSION, () => promptTr)
+promptBlocks = promptBlocksOf(promptDoc)
+assert.strictEqual(promptStateOf(promptBlocks[0]), 'rendered', 'fixture: the in-memory override survived the re-attach')
+assert.strictEqual(promptStateOf(promptBlocks[1]), 'raw', 'fixture: the un-clicked message is still raw')
+promptManagerView = await commit(stateFor(), { open: true }, true)
+assert.strictEqual(promptCheckboxFor(promptManagerView, zh.promptPreview).props.checked, false, 'fixture: the saved OFF state survived the reload')
+promptCheckboxFor(promptManagerView, zh.promptPreview).props.onChange()
+await commit(stateFor(), { open: true })
+assert.strictEqual(api.promptDefaultModeOf(), api.PROMPT_MODE_RENDERED, 'C4: switch back on is live')
+assert.strictEqual(api.promptMode.size, 0, 'C4: the switch clears every per-message override')
+promptBlocks = promptBlocksOf(promptDoc)
+for (const block of promptBlocks) {
+  assert.strictEqual(promptStateOf(block), 'rendered', 'C4: every message is rendered again')
+  assert.ok(!promptBlocksHidden(block), 'C4: no hidden residue')
+}
+for (const view of promptConversation.views) assert.ok(view.official.classList.contains('dsh-sam-prompt-hide'), 'C4: the official nodes are hidden again')
+
+// ---- C6: two attached mounts follow ONE switch (no single-side residue) ----
+// The real pair is the same session mounted in the main pane and in the stock
+// sidebar chat tab. `promptContainerFor` resolves one container per session id,
+// so this harness cannot mount the SAME id twice; two child sessions exercise
+// the same `promptSyncs` fan-out the real pair uses.
+state = dualStateFor()
+promptBindingFor = id => (id === PROMPT_SESSION || id === PROMPT_SESSION_2 ? promptFeed : null)
+const promptConversation2 = promptConversationOf(promptDoc, PROMPT_SESSION_2, promptMessages)
+const promptAnchor2 = promptDoc.createElement('span')
+promptDoc.body.appendChild(promptAnchor2)
+const promptDispose2 = api.promptPreviewAttach(promptAnchor2, PROMPT_SESSION_2, () => promptTr)
+assert.strictEqual(promptBlocksOf(promptDoc).length, 4, 'C6: both mounts injected their blocks')
+promptManagerView = await commit(dualStateFor(), { open: true }, true)
+assert.strictEqual(promptCheckboxFor(promptManagerView, zh.promptPreview).props.checked, true, 'fixture: the saved ON state survived the reload')
+promptCheckboxFor(promptManagerView, zh.promptPreview).props.onChange()
+await commit(dualStateFor(), { open: true })
+const dualBlocks = promptBlocksOf(promptDoc)
+assert.strictEqual(dualBlocks.length, 4, 'C6: both mounts keep their blocks')
+for (const block of dualBlocks) {
+  assert.strictEqual(promptStateOf(block), 'raw', 'C6: both mounts follow the one switch')
+  assert.ok(promptBlocksHidden(block), 'C6: both blocks hidden')
+}
+for (const view of [...promptConversation.views, ...promptConversation2.views]) assert.ok(!view.official.classList.contains('dsh-sam-prompt-hide'), 'C6: no single-side hide residue')
+promptDispose2()
+promptDispose()
+
+// ---- C8: fail-closed shapes, both defaults, no throw ----------------------
+for (const mode of ['raw', 'rendered']) {
+  const pageA = installPromptDom()
+  api.promptSetDefaultMode(mode)
+  api.promptMode.clear()
+  state = { byId: { p1: { id: 'p1', origin: 'user', title: 'Parent', cwd: '/work', updatedAt: Date.now() } }, current: 'p1' }
+  promptBindingFor = () => promptFeed
+  promptConversationOf(pageA, 'p1', promptMessages)
+  const anchorA = pageA.createElement('span')
+  pageA.body.appendChild(anchorA)
+  const disposeA = api.promptPreviewAttach(anchorA, 'p1', () => promptTr)
+  assert.strictEqual(promptBlocksOf(pageA).length, 0, 'C8[' + mode + '] non-subagent session: no block injected')
+  assert.strictEqual(promptChipsOf(pageA).length, 0, 'C8[' + mode + '] non-subagent session: no chip injected')
+  disposeA()
+}
+for (const mode of ['raw', 'rendered']) {
+  const pageB = installPromptDom()
+  api.promptSetDefaultMode(mode)
+  api.promptMode.clear()
+  state = stateFor()
+  promptBindingFor = () => promptFeed
+  promptConversationOf(pageB, PROMPT_SESSION, [])
+  const anchorB = pageB.createElement('span')
+  pageB.body.appendChild(anchorB)
+  const disposeB = api.promptPreviewAttach(anchorB, PROMPT_SESSION, () => promptTr)
+  assert.strictEqual(promptBlocksOf(pageB).length, 0, 'C8[' + mode + '] host renders no user node: nothing injected')
+  assert.strictEqual(promptChipsOf(pageB).length, 0, 'C8[' + mode + '] host renders no user node: no chip')
+  disposeB()
+}
+for (const mode of ['raw', 'rendered']) {
+  const pageC = installPromptDom()
+  api.promptSetDefaultMode(mode)
+  api.promptMode.clear()
+  state = stateFor()
+  promptBindingFor = () => null
+  const anchorC = pageC.createElement('span')
+  pageC.body.appendChild(anchorC)
+  const disposeC = api.promptPreviewAttach(anchorC, PROMPT_SESSION, () => promptTr)
+  assert.strictEqual(promptBlocksOf(pageC).length, 0, 'C8[' + mode + '] no binding and no conversation body: nothing to inject into, no throw')
+  disposeC()
+}
+// Known, pre-existing (g-023) shape, recorded rather than changed here: when a
+// user node IS on screen but this plugin holds no binding, the accepted DOM
+// fallback still previews that node's own body (source=dom). Nothing is
+// fabricated and nothing throws.
+const pageD = installPromptDom()
+api.promptSetDefaultMode('rendered')
+api.promptMode.clear()
+state = stateFor()
+promptBindingFor = () => null
+const conversationD = promptConversationOf(pageD, PROMPT_SESSION, promptMessages)
+const anchorD = pageD.createElement('span')
+pageD.body.appendChild(anchorD)
+const disposeD = api.promptPreviewAttach(anchorD, PROMPT_SESSION, () => promptTr)
+const domBlocks = promptBlocksOf(pageD)
+assert.strictEqual(domBlocks.length, 2, 'C8-note: with a user node on screen but no binding, the pre-existing DOM fallback still previews (g-023, unchanged)')
+for (const block of domBlocks) assert.strictEqual(block.getAttribute('data-dsh-sam-prompt-source'), 'dom', 'C8-note: the fallback reads the node own body, never a neighbour record')
+for (const view of conversationD.views) assert.ok(view.official.classList.contains('dsh-sam-prompt-hide'), 'C8-note: rendered state hides the official node it replaces')
+disposeD()
+results.promptPreviewSwitch = {
+  c1: 'absent key = ON, block visible + chip + hide class',
+  c2: 'OFF live: blocks hidden, chips kept, no hide residue',
+  c3: 'one message rendered, rest raw, prefs untouched',
+  c5: 'cold boot reads prefs; override dropped',
+  c4: 'ON live: all rendered, overrides cleared',
+  c6: 'two mounts, one switch, no single-side residue',
+  c8: 'non-subagent / no nodes / no container: nothing injected, no throw',
+  c8note: 'no binding + on-screen node: g-023 DOM fallback previews (source=dom), unchanged',
 }
 
 // Every assertion above has already thrown by the time this line runs, so
