@@ -315,6 +315,14 @@ export interface Prefs {
   subagentBgDark?: string
   filterCollapsed?: boolean
   showDetails?: boolean
+  /*
+   * Subagent prompt preview default (g-030): an absent key means ON, so a stored
+   * prefs record written before this switch existed keeps the v1.10.0 behaviour.
+   * OFF still injects the preview block and the 「渲染 / 原文」 chip; only the
+   * default landing state flips to the official raw text. Per-message choices stay
+   * in `promptMode` (memory only), never in this record.
+   */
+  promptPreview?: boolean
 }
 
 export interface SubagentAddress {
