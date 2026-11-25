@@ -1376,6 +1376,377 @@ assert.ok(promptBaseAt >= 0 && promptFallbackAt > promptBaseAt, 'g-032: the <=56
 const strippedPromptCss = promptBaseCss.replace(/;?(box-sizing:border-box|max-width:100%|width:calc\(100% - 32px\)|margin-left:auto)/g, '')
 assert.ok(!promptNarrowOk(strippedPromptCss), 'g-032 control: stripping the new declarations makes the same assertion reject')
 results.promptNarrow = { css: true, media: true, control: true }
+// ORDER MATTERS: keep this block before the g-030 section at the end of the
+// file. That section installs its own minimal `document` and starts the prompt
+// preview's MutationObserver/timers, and the manager fixtures below then
+// intermittently see a stale pending commit (measured: 1 in 3 runs failed the
+// backdrop assertion before the blocks were ordered this way).
+// 11. g-031 — the workspace picker is a self-contained, input-filterable
+//     combobox (no third-party component, no second popover). Asserted through
+//     the REAL manager component and the built bundle, on a fixture with three
+//     discovered cwds: ordering/de-dup, substring filtering with marks, the
+//     selection semantics (scope + sessionScope reset + limit reset), the whole
+//     keyboard/IME state machine, the no-match and stale/empty-cwd arms, the
+//     list's in-panel positioning, and the neighbouring behaviours it must not
+//     disturb (backdrop close, batch bar, collapsed filters, row search).
+{
+  const WS_A = '/home/miuzel/workspace/personal/subagent-ui'
+  const WS_B = '/srv/apps/other-project'
+  const WS_C = '/work/subagent-ui-demo'
+  const wsParent = (id, cwd, name) => ({ id, origin: 'user', title: name, cwd, updatedAt: Date.now() })
+  const wsChild = (id, parentId, cwd, name, ageSeconds) => ({ id, parentId, origin: 'subagent', title: name, cwd, updatedAt: Date.now() - (ageSeconds || 0) * 1000, running: false })
+  const wsState = () => ({
+    byId: {
+      p1: wsParent('p1', WS_A, 'Parent A'),
+      p2: wsParent('p2', WS_B, 'Parent B'),
+      p3: wsParent('p3', WS_C, 'Parent C'),
+      'session-wa': wsChild('session-wa', 'p1', WS_A, 'child in A', 1),
+      'session-wb': wsChild('session-wb', 'p2', WS_B, 'child in B', 2),
+    },
+    current: 'p1',
+  })
+  const wsNoCwd = () => ({
+    byId: {
+      p1: wsParent('p1', undefined, 'Parent A'),
+      p2: wsParent('p2', WS_B, 'Parent B'),
+      'session-wa': wsChild('session-wa', 'p1', undefined, 'child in A', 1),
+      'session-wb': wsChild('session-wb', 'p2', WS_B, 'child in B', 2),
+    },
+    current: 'p1',
+  })
+  const wsRows = view => view.nodes.filter(n => typeof (n.props || {}).className === 'string' && (n.props || {}).className.split(' ').includes('dsh-sam-row'))
+  const wsInput = view => view.nodes.find(n => n.tag === 'input' && (n.props || {}).role === 'combobox')
+  const wsList = view => view.nodes.find(n => (n.props || {}).role === 'listbox')
+  const wsOptionNodes = view => view.nodes.filter(n => (n.props || {}).role === 'option')
+  const wsOptionTitles = view => wsOptionNodes(view).map(n => String((n.props || {}).title || ''))
+  const wsValue = view => String((wsInput(view) || { props: {} }).props.value || '')
+  const wsPress = (view, key, native) => {
+    const input = wsInput(view)
+    assert.ok(input, 'the combobox input renders')
+    input.props.onKeyDown({ key, preventDefault() {}, stopPropagation() {}, nativeEvent: native || {} })
+  }
+  const wsOpen = async () => {
+    wsInput(view).props.onFocus({})
+    return commit(wsState(), { open: true })
+  }
+  const wsPick = async (title) => {
+    const current = await wsOpen()
+    const option = wsOptionNodes(current).find(n => String((n.props || {}).title) === title)
+    assert.ok(option, 'option ' + title + ' exists; got ' + JSON.stringify(wsOptionTitles(current)))
+    option.props.onClick()
+    return commit(wsState(), { open: true })
+  }
+  const defaultPrefs = JSON.stringify({ filterCollapsed: false })
+  storedPrefs = defaultPrefs
+  ledgerPayload = { ok: true, active: [], ended: [] }
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, active: [], ended: [] }) })
+
+  // C1 — ARIA roles and the fixed-first, de-duplicated, path-sorted candidate list.
+  cells = {}; childCells = new Map()
+  let view = await commit(wsState(), { open: true }, true)
+  let input = wsInput(view)
+  assert.ok(input, 'C1: the workspace control is an input combobox')
+  assert.strictEqual(input.props.role, 'combobox', 'C1: role=combobox')
+  assert.strictEqual(input.props['aria-expanded'], false, 'C1: collapsed until focused/clicked')
+  assert.strictEqual(input.props['aria-controls'], 'dsh-sam-scope-listbox', 'C1: aria-controls names the listbox')
+  assert.strictEqual(input.props['aria-autocomplete'], 'list', 'C1: aria-autocomplete=list')
+  assert.ok(!wsList(view), 'C1: no candidate list before focus')
+  assert.strictEqual(wsValue(view), '当前工作区', 'C1: the closed control shows the selected scope label')
+  input.props.onFocus({})
+  view = await commit(wsState(), { open: true })
+  input = wsInput(view)
+  assert.strictEqual(input.props['aria-expanded'], true, 'C1: focus expands the candidates')
+  assert.strictEqual(input.props['aria-activedescendant'], 'dsh-sam-scope-option-0', 'C1: aria-activedescendant points at the active option')
+  assert.ok(wsList(view), 'C1: the candidate list renders')
+  assert.strictEqual(String(wsList(view).props.id), 'dsh-sam-scope-listbox', 'C1: listbox id is the one aria-controls names')
+  assert.deepStrictEqual(wsOptionTitles(view), ['当前工作区', '全部工作区', WS_A, WS_B, WS_C], 'C1: two fixed exits first, then the de-duplicated cwds in path order')
+  assert.strictEqual(wsValue(view), '', 'C1: focusing presents an empty query (the label stays in the title/placeholder)')
+  results.wsComboboxC1 = { role: 'combobox', options: wsOptionTitles(view).length, order: 'fixed-first' }
+
+  // C2 + C3 — a NON-prefix, case-insensitive substring narrows only the cwds and
+  // the hit is rendered with the existing highlight() helper's <mark>.
+  input.props.onChange({ target: { value: 'SUBAGENT-UI' } })
+  view = await commit(wsState(), { open: true })
+  assert.deepStrictEqual(wsOptionTitles(view), ['当前工作区', '全部工作区', WS_A, WS_C], 'C2: middle fragment narrows cwds, both fixed exits stay; B does not match')
+  const wsMarks = view.nodes.filter(n => n.tag === 'mark')
+  assert.ok(wsMarks.length >= 2, 'C3: hit fragments render as <mark> nodes; marks=' + wsMarks.length)
+  assert.ok(wsMarks.some(n => String((n.props || {}).children) === 'subagent-ui'), 'C3: the mark text is the matched fragment (original casing)')
+  results.wsComboboxC2 = { filtered: wsOptionTitles(view).slice(2), marks: wsMarks.length }
+
+  // C4 — picking a cwd sets scope='workspace:<cwd>' and the visible rows follow
+  // the new workspaceKey; it also returns the SESSION scope to all sessions.
+  storedPrefs = defaultPrefs
+  cells = {}; childCells = new Map()
+  view = await commit(wsState(), { open: true }, true)
+  assert.strictEqual(wsRows(view).length, 1, 'C4: currentWorkspace shows the current session cwd rows only')
+  assert.ok(view.text.join(' ').includes('child in A'), 'C4: child A visible before the switch')
+  view = await wsPick(WS_B)
+  assert.strictEqual(wsRows(view).length, 1, 'C4: after the switch only the new workspace rows remain')
+  assert.ok(view.text.join(' ').includes('child in B') && !view.text.join(' ').includes('child in A'), 'C4: the visible row set followed workspaceKey')
+  assert.ok(!wsList(view), 'C4: selecting closes the candidate list')
+  assert.strictEqual(wsValue(view), 'other-project', 'C4: the closed control shows the selected basename')
+  // sessionScope reset: select session p2 first, then switch workspace; without
+  // the reset the new workspaceKey + old sessionScope would yield zero rows.
+  cells = {}; childCells = new Map()
+  view = await commit(wsState(), { open: true }, true)
+  view = await wsPick('全部工作区')
+  assert.strictEqual(wsRows(view).length, 2, 'C4: all workspaces exposes both sessions')
+  const wsSessionSelect = view.nodes.find(n => n.tag === 'select' && Array.isArray(n.props.children) && n.props.children.some(o => o && (o.props || {}).value === 'all' && String((o.props || {}).children) === '全部会话'))
+  assert.ok(wsSessionSelect, 'C4: the session selector still renders as a native select')
+  wsSessionSelect.props.onChange({ target: { value: 'p2' } })
+  view = await commit(wsState(), { open: true })
+  assert.strictEqual(wsRows(view).length, 1, 'C4: the session scope narrows to p2 rows')
+  assert.ok(view.text.join(' ').includes('child in B'), 'C4: p2 row visible under the session scope')
+  input = wsInput(view)
+  input.props.onFocus({})
+  view = await commit(wsState(), { open: true })
+  wsOptionNodes(view).find(n => String((n.props || {}).title) === WS_A).props.onClick()
+  view = await commit(wsState(), { open: true })
+  assert.ok(view.text.join(' ').includes('child in A'), 'C4: switching workspace reset sessionScope to all (the p1 row is reachable again)')
+  results.wsComboboxC4 = { scopeKey: true, sessionReset: true }
+
+  // C4 (pagination) — the same selection resets `limit` to PAGE: 45 rows plus a
+  // "load more" click then a workspace pick renders 40/45 again.
+  storedPrefs = defaultPrefs
+  cells = {}; childCells = new Map()
+  const manyById = { p1: wsParent('p1', WS_A, 'Parent A'), p2: wsParent('p2', WS_B, 'Parent B') }
+  for (let i = 0; i < 45; i += 1) manyById['session-many-' + i] = wsChild('session-many-' + i, 'p1', WS_A, 'many ' + i, i + 1)
+  const manyState = () => ({ byId: manyById, current: 'p1' })
+  view = await commit(manyState(), { open: true }, true)
+  assert.ok(view.text.join(' ').includes('显示 40/45 个'), 'C4: the first page is capped at PAGE')
+  const wsMore = view.nodes.find(n => typeof (n.props || {}).className === 'string' && (n.props || {}).className === 'dsh-sam-more')
+  assert.ok(wsMore, 'C4: the load-more button exists with 45 rows')
+  wsMore.props.onClick()
+  view = await commit(manyState(), { open: true })
+  assert.ok(view.text.join(' ').includes('显示 45/45 个'), 'C4: load-more raises the limit')
+  wsInput(view).props.onFocus({})
+  view = await commit(manyState(), { open: true })
+  wsOptionNodes(view).find(n => String((n.props || {}).title) === WS_A).props.onClick()
+  view = await commit(manyState(), { open: true })
+  assert.ok(view.text.join(' ').includes('显示 40/45 个'), 'C4: a workspace pick resets limit to PAGE; text=' + view.text.join(' ').slice(0, 200))
+  results.wsComboboxLimit = { before: '45/45', after: '40/45' }
+
+  // C5 — the two fixed exits select currentWorkspace / all respectively.
+  storedPrefs = defaultPrefs
+  cells = {}; childCells = new Map()
+  view = await commit(wsState(), { open: true }, true)
+  view = await wsPick('全部工作区')
+  assert.strictEqual(wsRows(view).length, 2, 'C5: all workspaces shows both rows')
+  assert.strictEqual(wsValue(view), '全部工作区', 'C5: the control reflects the all-workspaces selection')
+  view = await wsPick('当前工作区')
+  assert.strictEqual(wsRows(view).length, 1, 'C5: currentWorkspace narrows back to the current cwd')
+  assert.strictEqual(wsValue(view), '当前工作区', 'C5: the control reflects the current-workspace selection')
+  results.wsComboboxC5 = { all: 2, current: 1 }
+
+  // C6 — keyboard loop: arrows move the highlight without touching the input,
+  // Enter selects it, Esc is two-stage (list first, then the panel).
+  storedPrefs = defaultPrefs
+  cells = {}; childCells = new Map()
+  view = await commit(wsState(), { open: true }, true)
+  view = await wsOpen()
+  const wsStartValue = wsValue(view)
+  wsPress(view, 'ArrowDown')
+  view = await commit(wsState(), { open: true })
+  assert.strictEqual(wsInput(view).props['aria-activedescendant'], 'dsh-sam-scope-option-1', 'C6: ArrowDown moves the highlight')
+  wsPress(view, 'ArrowDown')
+  view = await commit(wsState(), { open: true })
+  assert.strictEqual(wsInput(view).props['aria-activedescendant'], 'dsh-sam-scope-option-2', 'C6: ArrowDown reaches the first cwd candidate')
+  wsPress(view, 'ArrowUp')
+  view = await commit(wsState(), { open: true })
+  assert.strictEqual(wsInput(view).props['aria-activedescendant'], 'dsh-sam-scope-option-1', 'C6: ArrowUp moves back')
+  assert.strictEqual(wsValue(view), wsStartValue, 'C6: arrows never change the input value')
+  wsPress(view, 'ArrowDown')
+  view = await commit(wsState(), { open: true })
+  wsPress(view, 'Enter')
+  view = await commit(wsState(), { open: true })
+  assert.ok(!wsList(view), 'C6: Enter picks the highlighted option and closes the list')
+  assert.strictEqual(wsValue(view), 'subagent-ui', 'C6: Enter selected the first cwd candidate')
+  assert.ok(view.text.join(' ').includes('child in A'), 'C6: the selection applied (rows follow)')
+  // The control stays focused after a pick; typing into it must reopen the
+  // candidates instead of being swallowed by the closed state.
+  input = wsInput(view)
+  input.props.onChange({ target: { value: 'other' } })
+  view = await commit(wsState(), { open: true })
+  assert.ok(wsList(view), 'C6: typing on the still-focused closed control reopens the candidate list')
+  assert.deepStrictEqual(wsOptionTitles(view), ['当前工作区', '全部工作区', WS_B], 'C6: the reopen applies the typed filter')
+  wsPress(view, 'Escape')
+  view = await commit(wsState(), { open: true })
+  // Esc #1: only the list closes, the panel stays open.
+  input = wsInput(view)
+  input.props.onFocus({})
+  view = await commit(wsState(), { open: true })
+  assert.ok(wsList(view), 'C6: focused again, candidates open')
+  wsPress(view, 'Escape')
+  view = await commit(wsState(), { open: true })
+  assert.ok(!wsList(view), 'C6: first Esc closes the candidate list')
+  assert.ok(view.nodes.some(n => (n.props || {}).className === 'dsh-sam-panel'), 'C6: first Esc leaves the manager panel open')
+  wsPress(view, 'Escape')
+  view = await commit(wsState(), { open: true })
+  assert.ok(!view.nodes.some(n => (n.props || {}).className === 'dsh-sam-panel'), 'C6: the next Esc closes the panel')
+  results.wsComboboxC6 = { arrows: true, enter: true, esc: 'two-stage' }
+
+  // C7 — IME composition: Enter/↑/↓ are inert from compositionstart to
+  // compositionend, and the keyboard works again after compositionend.
+  storedPrefs = defaultPrefs
+  cells = {}; childCells = new Map()
+  view = await commit(wsState(), { open: true }, true)
+  view = await wsOpen()
+  wsPress(view, 'ArrowDown')
+  view = await commit(wsState(), { open: true })
+  wsPress(view, 'ArrowDown')
+  view = await commit(wsState(), { open: true })
+  const wsImeBefore = wsInput(view).props['aria-activedescendant']
+  input = wsInput(view)
+  input.props.onCompositionStart({})
+  input.props.onKeyDown({ key: 'ArrowDown', preventDefault() {}, stopPropagation() {}, nativeEvent: {} })
+  input.props.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {}, nativeEvent: {} })
+  view = await commit(wsState(), { open: true })
+  assert.strictEqual(wsInput(view).props['aria-activedescendant'], wsImeBefore, 'C7: arrows are inert while composing')
+  assert.ok(wsList(view), 'C7: Enter does not commit while composing')
+  assert.ok(view.text.join(' ').includes('child in A') && !view.text.join(' ').includes('child in B'), 'C7: and the scope did not move')
+  // The native `isComposing` flag is honoured too (a browser may omit the events).
+  const wsActiveBefore = wsInput(view).props['aria-activedescendant']
+  wsPress(view, 'ArrowUp', { isComposing: true })
+  view = await commit(wsState(), { open: true })
+  assert.strictEqual(wsInput(view).props['aria-activedescendant'], wsActiveBefore, 'C7: nativeEvent.isComposing inhibits the arrow')
+  // compositionend restores the keyboard.
+  input = wsInput(view)
+  input.props.onCompositionStart({})
+  input.props.onCompositionEnd({})
+  input.props.onKeyDown({ key: 'ArrowUp', preventDefault() {}, stopPropagation() {}, nativeEvent: {} })
+  view = await commit(wsState(), { open: true })
+  assert.strictEqual(wsInput(view).props['aria-activedescendant'], 'dsh-sam-scope-option-1', 'C7: after compositionend the arrows work again')
+  wsPress(view, 'Enter')
+  view = await commit(wsState(), { open: true })
+  assert.ok(!wsList(view), 'C7: after compositionend Enter commits')
+  assert.ok(view.text.join(' ').includes('child in B'), 'C7: the committed item was 全部工作区 (both rows visible)')
+  results.wsComboboxC7 = { composing: 'inert', after: 'restored' }
+
+  // C8 — no match: the notice renders, the fixed exits stay clickable, the input
+  // keeps what was typed, and neither the scope nor the row set moves.
+  storedPrefs = defaultPrefs
+  cells = {}; childCells = new Map()
+  view = await commit(wsState(), { open: true }, true)
+  view = await wsOpen()
+  input = wsInput(view)
+  input.props.onChange({ target: { value: 'zzz-no-such-workspace' } })
+  view = await commit(wsState(), { open: true })
+  assert.ok(view.text.join(' ').includes('未发现匹配的工作区'), 'C8: the no-match notice renders')
+  assert.deepStrictEqual(wsOptionTitles(view), ['当前工作区', '全部工作区'], 'C8: the fixed exits survive an empty result')
+  assert.strictEqual(wsValue(view), 'zzz-no-such-workspace', 'C8: the typed query is not cleared')
+  assert.strictEqual(wsRows(view).length, 1, 'C8: the panel row set is unchanged (scope untouched)')
+  wsOptionNodes(view).find(n => String((n.props || {}).title) === '全部工作区').props.onClick()
+  view = await commit(wsState(), { open: true })
+  assert.strictEqual(wsRows(view).length, 2, 'C8: a fixed exit is still selectable from the empty result')
+  results.wsComboboxC8 = { notice: true, fixed: true, value: 'kept' }
+
+  // C9 — a selected workspace that disappears keeps its selection and says so
+  // (no silent fallback to `all`); an empty currentCwd marks the fixed
+  // current-workspace option unavailable without throwing.
+  storedPrefs = defaultPrefs
+  cells = {}; childCells = new Map()
+  view = await commit(wsState(), { open: true }, true)
+  view = await wsPick(WS_B)
+  assert.strictEqual(wsValue(view), 'other-project', 'C9: fixture selected WS_B')
+  const wsRenamed = () => ({
+    byId: {
+      p1: wsParent('p1', WS_A, 'Parent A'),
+      p2: wsParent('p2', '/srv/apps/renamed-workspace', 'Parent B'),
+      p3: wsParent('p3', WS_C, 'Parent C'),
+      'session-wa': wsChild('session-wa', 'p1', WS_A, 'child in A', 1),
+      'session-wb': wsChild('session-wb', 'p2', '/srv/apps/renamed-workspace', 'child in B', 2),
+    },
+    current: 'p1',
+  })
+  view = await commit(wsRenamed(), { open: true })
+  assert.ok(wsValue(view).includes('该工作区已不可用'), 'C9: the stale selection is reported in the control; value=' + wsValue(view))
+  assert.strictEqual(wsRows(view).length, 0, 'C9: the stale workspace is NOT silently widened to all (0 rows, not 2)')
+  input = wsInput(view)
+  input.props.onFocus({})
+  view = await commit(wsRenamed(), { open: true })
+  assert.ok(view.text.join(' ').includes('该工作区已不可用'), 'C9: the open list repeats the degradation notice')
+  assert.deepStrictEqual(wsOptionTitles(view), ['当前工作区', '全部工作区', WS_A, '/srv/apps/renamed-workspace', WS_C], 'C9: candidates reflect the new discovery set')
+  // empty currentCwd arm
+  storedPrefs = defaultPrefs
+  cells = {}; childCells = new Map()
+  view = await commit(wsNoCwd(), { open: true }, true)
+  input = wsInput(view)
+  input.props.onFocus({})
+  view = await commit(wsNoCwd(), { open: true })
+  const wsCurrentOption = wsOptionNodes(view).find(n => String((n.props || {}).title) === '当前工作区')
+  assert.ok(wsCurrentOption, 'C9: the current-workspace option is retained with no cwd')
+  assert.strictEqual(wsCurrentOption.props['aria-disabled'], 'true', 'C9: it is marked unavailable')
+  assert.ok(view.text.join(' ').includes('当前会话没有工作区'), 'C9: the reason is rendered (title/secondary line)')
+  wsPress(view, 'Enter')
+  view = await commit(wsNoCwd(), { open: true })
+  assert.ok(wsList(view), 'C9: Enter on the unavailable option is a no-op instead of throwing')
+  assert.strictEqual(wsRows(view).length, 1, 'C9: the existing empty-cwd behaviour is unchanged (workspaceKey undefined => the session scope alone applies)')
+  assert.ok(view.text.join(' ').includes('child in A'), 'C9: the row is still rendered with no cwd')
+  results.wsComboboxC9 = { stale: 'kept+notice', emptyCwd: 'disabled+no-throw' }
+
+  // C10 — the list is in-panel absolute (never fixed, never a second popover).
+  storedPrefs = defaultPrefs
+  cells = {}; childCells = new Map()
+  view = await commit(wsState(), { open: true }, true)
+  view = await wsOpen()
+  const wsListProps = wsList(view).props
+  assert.strictEqual(wsListProps.style.position, 'absolute', 'C10: the candidate list is position:absolute')
+  assert.ok(!String(wsListProps.style.position).includes('fixed'), 'C10: never position:fixed')
+  assert.strictEqual(wsListProps.popover, undefined, 'C10: the list is not a popover')
+  assert.strictEqual(view.nodes.filter(n => (n.props || {}).popover !== undefined).length, 1, 'C10: exactly one popover in the tree (the panel backdrop)')
+  assert.ok(/\.dsh-sam-scope-list\{position:absolute/.test(libSrc), 'C10: the stylesheet keeps the list absolute')
+  assert.ok(!/\.dsh-sam-scope-list\{[^}]*position:fixed/.test(libSrc), 'C10: no fixed rule for the list')
+  assert.ok(/\.dsh-sam-scope-combo\{[^}]*position:relative/.test(libSrc), 'C10: the list is anchored by an in-panel relative container')
+  results.wsComboboxC10 = { position: 'absolute', popovers: 1 }
+
+  // C11 — neighbouring behaviours survive: backdrop closes the panel, batch mode
+  // still opens its bar, collapsed filters still expand, row search still filters.
+  storedPrefs = defaultPrefs
+  cells = {}; childCells = new Map()
+  view = await commit(wsState(), { open: true }, true)
+  const backdropNode = view.nodes.find(n => (n.props || {}).className === 'dsh-sam-backdrop')
+  assert.ok(backdropNode, 'C11: the backdrop renders')
+  const outside = {}
+  outside.target = outside
+  outside.currentTarget = outside
+  backdropNode.props.onMouseDown(outside)
+  view = await commit(wsState(), { open: true })
+  assert.ok(!view.nodes.some(n => (n.props || {}).className === 'dsh-sam-panel'), 'C11: clicking the backdrop still closes the panel')
+  view = await commit(wsState(), { open: true }, true)
+  const wsBatch = view.nodes.find(n => typeof (n.props || {}).className === 'string' && (n.props || {}).className.includes('dsh-sam-batch-btn'))
+  assert.ok(wsBatch, 'C11: the batch button renders')
+  wsBatch.props.onClick()
+  view = await commit(wsState(), { open: true })
+  assert.ok(view.nodes.some(n => (n.props || {}).className === 'dsh-sam-batch-bar'), 'C11: batch mode still opens the batch bar')
+  assert.ok(view.nodes.some(n => n.tag === 'input' && String((n.props || {}).type) === 'checkbox' && String((n.props || {})['aria-label'] || '').startsWith('选择')), 'C11: batch checkboxes render')
+  // collapsed filters: the combobox is hidden, the summary line expands them.
+  storedPrefs = JSON.stringify({ filterCollapsed: true })
+  cells = {}; childCells = new Map()
+  view = await commit(wsState(), { open: true }, true)
+  const collapsedInfo = view.nodes.find(n => (n.props || {}).className === 'dsh-sam-collapsed-info')
+  assert.ok(collapsedInfo, 'C11: the collapsed filter summary renders')
+  assert.ok(!wsInput(view), 'C11: the workspace combobox is inside the expandable filter block')
+  globalThis.HTMLElement = globalThis.HTMLElement || class HTMLElement {}
+  const expandEvent = { target: {}, currentTarget: {} }
+  collapsedInfo.props.onClick(expandEvent)
+  view = await commit(wsState(), { open: true })
+  assert.ok(wsInput(view), 'C11: expanding the filters reveals the combobox again')
+  // row search still narrows the list independently of the workspace query.
+  storedPrefs = defaultPrefs
+  cells = {}; childCells = new Map()
+  view = await commit(wsState(), { open: true }, true)
+  view = await wsPick('全部工作区')
+  assert.strictEqual(wsRows(view).length, 2, 'C11: fixture shows both workspaces before searching')
+  const searchInput = view.nodes.find(n => n.tag === 'input' && String((n.props || {}).placeholder || '').startsWith('搜索名称'))
+  assert.ok(searchInput, 'C11: the row-search input renders')
+  searchInput.props.onChange({ target: { value: 'child in B' } })
+  view = await commit(wsState(), { open: true })
+  assert.strictEqual(wsRows(view).length, 1, 'C11: row search still filters the list')
+  assert.ok(view.text.join(' ').includes('child in B'), 'C11: the matching row is the one shown')
+  results.wsComboboxC11 = { backdrop: true, batch: true, collapsed: true, search: true }
+}
+
+// Every assertion above has already thrown by the time this line runs, so
 /* ================================================================== */
 /* g-030: the prompt-preview default switch (semantics B). The preview   */
 /* is DOM injection rather than React, so this section installs a        */
@@ -1800,8 +2171,6 @@ results.promptPreviewSwitch = {
   c8: 'non-subagent / no nodes / no container: nothing injected, no throw',
   c8note: 'no binding + on-screen node: g-023 DOM fallback previews (source=dom), unchanged',
 }
-
-// Every assertion above has already thrown by the time this line runs, so
 // reaching it means the harness passed: exit 0 explicitly, because the plugin's
 // pollers leave live timers behind and the event loop would otherwise never
 // drain. A failing run throws first and keeps its non-zero status.
